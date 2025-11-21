@@ -225,24 +225,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get detailed resource checks for a specific benchmark
+  // Get detailed resource checks for a specific benchmark (only failed checks)
   app.get("/api/benchmarks/:id/resources", isAuthenticated, async (req: any, res) => {
     try {
       const benchmarkResultId = req.params.id;
       const resources = await storage.getControlResultsByBenchmark(benchmarkResultId);
       
-      const formattedResources = resources.map(control => ({
-        id: control.id,
-        resourceId: control.resourceId || 'N/A',
-        resourceType: control.resourceType || 'Unknown',
-        controlName: control.controlName,
-        passed: control.passed,
-        reason: control.reason || `Resource optimization opportunity: ${control.controlName}`,
-        estimatedSavings: control.estimatedSavings,
-        executedAt: control.executedAt,
-      }));
+      // Only return failed checks (optimization opportunities)
+      // Treat undefined/null as failed (optimization opportunities)
+      const failedResources = resources
+        .filter(control => control.passed !== true)
+        .map(control => ({
+          id: control.id,
+          resourceId: control.resourceId || 'N/A',
+          resourceType: control.resourceType || 'Unknown',
+          controlName: control.controlName,
+          passed: control.passed,
+          reason: control.reason || `Resource optimization opportunity: ${control.controlName}`,
+          estimatedSavings: control.estimatedSavings,
+          executedAt: control.executedAt,
+        }));
       
-      res.json(formattedResources);
+      res.json(failedResources);
     } catch (error) {
       console.error("Error fetching benchmark resources:", error);
       res.status(500).json({ message: "Failed to fetch benchmark resources" });

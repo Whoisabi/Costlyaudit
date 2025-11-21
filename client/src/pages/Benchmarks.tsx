@@ -1,10 +1,26 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Play, CheckCircle2, XCircle } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Play, CheckCircle2, XCircle, AlertTriangle, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
@@ -80,8 +96,21 @@ const benchmarkMetadata: Record<string, { name: string; description: string; tot
 // Normalize benchmark IDs to lowercase for consistent comparison
 const normalizeId = (id: string) => id.toLowerCase();
 
+interface ResourceDetail {
+  id: string;
+  resourceId: string;
+  resourceType: string;
+  controlName: string;
+  passed: boolean;
+  reason: string;
+  estimatedSavings: number;
+  executedAt: string;
+}
+
 export default function Benchmarks() {
   const { toast } = useToast();
+  const [selectedBenchmarkId, setSelectedBenchmarkId] = useState<string | null>(null);
+  const [showResourcesDialog, setShowResourcesDialog] = useState(false);
 
   const { data: apiResults, isLoading } = useQuery<Array<{
     id: string;
@@ -96,8 +125,15 @@ export default function Benchmarks() {
     queryKey: ["/api/benchmarks/results"],
   });
 
+  // Fetch resource details when a benchmark is selected
+  // The queryKey array gets joined with "/" by the default queryFn
+  const { data: resourceDetails, isLoading: isLoadingResources } = useQuery<ResourceDetail[]>({
+    queryKey: ["/api/benchmarks", selectedBenchmarkId, "resources"],
+    enabled: !!selectedBenchmarkId && showResourcesDialog,
+  });
+
   // Merge API results with metadata, showing all available benchmarks
-  const benchmarks: Benchmark[] = Object.keys(benchmarkMetadata).map((benchmarkId) => {
+  const benchmarks: (Benchmark & { resultId?: string })[] = Object.keys(benchmarkMetadata).map((benchmarkId) => {
     const metadata = benchmarkMetadata[benchmarkId];
     const apiResult = apiResults?.find(r => normalizeId(r.benchmarkId) === normalizeId(benchmarkId));
     
@@ -110,6 +146,7 @@ export default function Benchmarks() {
       passedControls: apiResult?.controlsPassed || 0,
       failedControls: apiResult?.controlsFailed || 0,
       estimatedSavings: apiResult?.estimatedSavings || 0,
+      resultId: apiResult?.id, // Store the actual result ID for fetching resources
     };
   });
 
@@ -152,6 +189,15 @@ export default function Benchmarks() {
     if (total === 0) return 0;
     return Math.round((passed / total) * 100);
   };
+
+  const handleViewResources = (benchmarkResultId: string, benchmarkName: string) => {
+    setSelectedBenchmarkId(benchmarkResultId);
+    setShowResourcesDialog(true);
+  };
+
+  const selectedBenchmarkName = selectedBenchmarkId
+    ? apiResults?.find(r => r.id === selectedBenchmarkId)?.benchmarkName
+    : null;
 
   return (
     <div className="p-6 space-y-6">
@@ -236,22 +282,105 @@ export default function Benchmarks() {
                     </span>
                   </div>
 
-                  <Button
-                    className="w-full"
-                    variant="outline"
-                    onClick={() => runBenchmarkMutation.mutate(benchmark.id)}
-                    disabled={runBenchmarkMutation.isPending}
-                    data-testid={`button-run-${benchmark.id}`}
-                  >
-                    <Play className="h-4 w-4 mr-2" />
-                    {runBenchmarkMutation.isPending ? "Running..." : "Run Benchmark"}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1"
+                      variant="outline"
+                      onClick={() => runBenchmarkMutation.mutate(benchmark.id)}
+                      disabled={runBenchmarkMutation.isPending}
+                      data-testid={`button-run-${benchmark.id}`}
+                    >
+                      <Play className="h-4 w-4 mr-2" />
+                      {runBenchmarkMutation.isPending ? "Running..." : "Run"}
+                    </Button>
+                    {benchmark.resultId && (
+                      <Button
+                        className="flex-1"
+                        variant="default"
+                        onClick={() => handleViewResources(benchmark.resultId!, benchmark.name)}
+                        data-testid={`button-view-resources-${benchmark.id}`}
+                      >
+                        View Resources
+                        <ChevronRight className="h-4 w-4 ml-2" />
+                      </Button>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             );
           })}
         </div>
       )}
+
+      {/* Resource Details Dialog */}
+      <Dialog open={showResourcesDialog} onOpenChange={(open) => {
+        setShowResourcesDialog(open);
+        if (!open && selectedBenchmarkId) {
+          // Clear query data to prevent stale UI
+          queryClient.setQueryData(["/api/benchmarks", selectedBenchmarkId, "resources"], undefined);
+          // Clear selected benchmark after clearing data
+          setSelectedBenchmarkId(null);
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{selectedBenchmarkName || "Benchmark"} - Resources</DialogTitle>
+            <DialogDescription>
+              Detailed resource-level cost optimization opportunities
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoadingResources ? (
+            <div className="space-y-4">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : !resourceDetails || !Array.isArray(resourceDetails) || resourceDetails.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <CheckCircle2 className="h-12 w-12 mx-auto mb-4 text-green-600" />
+              <p className="text-lg font-medium">All checks passed!</p>
+              <p className="text-sm">No cost optimization opportunities found.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Resource ID</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Issue</TableHead>
+                      <TableHead className="text-right">Est. Savings/mo</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {resourceDetails.map((resource) => (
+                      <TableRow key={resource.id} data-testid={`row-resource-${resource.id}`}>
+                        <TableCell className="font-mono text-sm" data-testid={`cell-resource-id-${resource.id}`}>
+                          {resource.resourceId}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{resource.resourceType}</Badge>
+                        </TableCell>
+                        <TableCell className="max-w-md">
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-500 mt-0.5 flex-shrink-0" />
+                            <span className="text-sm">{resource.reason}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-semibold text-primary">
+                          {formatCurrency(resource.estimatedSavings)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
