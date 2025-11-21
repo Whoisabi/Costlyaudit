@@ -1,0 +1,364 @@
+Title: Build the CostlyAgent Web Application
+Description:
+Create a complete full-stack web application named CostlyAgent that uses Steampipe, Powerpipe, and the AWS Thrifty mod to visually analyze cost optimization opportunities in AWS.
+The goal is to provide an interactive UI dashboard where users can run Steampipe queries, visualize Powerpipe dashboards, browse benchmarks, filter controls, inspect resources, and view recommendations using graphical components.
+
+Reference for behavior and domain logic:
+https://steampipe.io/blog/control-cost-with-aws-thrifty
+
+🎯 Primary Requirements
+1. Steampipe + Powerpipe Integration
+
+Backend must run Steampipe CLI queries programmatically.
+
+Load and execute dashboards & benchmarks from:
+AWS Thrifty Mod
+
+15 Benchmarks
+
+41 Controls
+
+Support running:
+
+steampipe check aws_thrifty.benchmark.*
+
+steampipe check aws_thrifty.control.*
+
+powerpipe dashboard start aws_thrifty
+
+Query-mode (steampipe query "SQL")
+
+Parse results into JSON for the UI.
+
+2. Webapp Name:
+
+CostlyAgent
+
+3. Core Features
+
+✔ Real-time scan execution
+✔ Full benchmark & control exploration
+✔ Graphical dashboard UI
+✔ SQL explorer for Steampipe queries
+✔ Resource drill-down
+✔ Estimated savings calculation from AWS Thrifty
+✔ Export reports (CSV/PDF)
+✔ Multi-account support (via Steampipe AWS plugins config)
+✔ Authentication: simple Login + RBAC (Admin, Viewer)
+
+💻 Tech Stack Requirements
+Frontend (React + TypeScript)
+
+React (Vite) + TailwindCSS
+
+State Mgmt: Zustand / React Query
+
+Charting: Recharts or Chart.js
+
+Components needed:
+
+Resource tables with sorting + filtering
+
+Benchmark cards
+
+Control detail pages
+
+Savings summary cards
+
+Pie, bar, line charts
+
+Code editor for SQL queries
+
+Terminal-like “live query output”
+
+Loading skeletons
+
+Dark/Light mode
+
+Backend
+
+Node.js + TypeScript (Express or NestJS)
+
+Execute Steampipe queries using:
+
+Shell execution
+
+Or embedded plugin (if supported)
+
+Endpoints:
+
+/api/run/benchmark/:id
+
+/api/run/control/:id
+
+/api/run/sql
+
+/api/list/benchmarks
+
+/api/list/controls
+
+/api/list/resources
+
+/api/dashboard-summary
+
+/api/export
+
+/api/auth/login
+
+Organize results into:
+
+severity
+
+service
+
+resource type
+
+monthly savings estimate
+
+risk score
+
+control status (passed/failed)
+
+compliance status
+
+Database
+
+Optional: SQLite/Postgres (only for storing history)
+
+Tables:
+
+scans (id, timestamp, benchmark, status, resultJson)
+
+controls
+
+resources
+
+users
+
+settings
+
+Infrastructure
+
+Dockerized backend + Steampipe
+
+Docker-compose for dev
+
+Optional deployment to ECS / EKS / Render / Railway
+
+🎨 UI REQUIREMENTS — Detailed
+1. Home Dashboard
+
+KPIs:
+
+"Total Potential Savings"
+
+"High Risk Resources"
+
+"Failed Controls"
+
+"Benchmarks Passed vs Failed"
+
+Charts:
+
+Cost Savings Breakdown (per service)
+
+Resource Utilization Heatmap
+
+Trends (past scans)
+
+2. Benchmarks Page (15 benchmarks)
+
+Show cards for each benchmark:
+
+Example cards:
+
+EC2 Checks
+
+S3 Checks
+
+EBS Checks
+
+CloudFront Checks
+
+RDS Checks
+
+etc.
+
+Each card shows:
+
+progress ring (percentage passed)
+
+total controls
+
+failed controls count
+
+estimated savings
+
+3. Control Detail Page (41 controls)
+
+For each control:
+
+Control metadata
+
+SQL used (visible + copy)
+
+Query result table
+
+Chart: severity distribution
+
+Affected resources list
+
+Estimated savings per resource
+
+Button: “Run Control”
+
+Button: “Export Results”
+
+4. Resource Explorer
+
+For each affected resource show:
+
+Resource ID
+
+Region
+
+Account
+
+AWS Service
+
+Reason for flag
+
+Savings potential
+
+Link to AWS console (generated)
+
+5. Powerpipe Dashboard Embedding
+
+Embed Powerpipe dashboards visually:
+
+Use iframe or rendered JSON components
+
+Allow switching between dashboards:
+
+“Cost Overview”
+
+“Unused Resources”
+
+“Rightsize Recommendations”
+
+“Networking Waste”
+
+“Storage Waste”
+
+6. SQL Query Explorer
+
+A full page similar to Steampipe Studio:
+
+SQL editor with syntax highlighting
+
+Run button
+
+Live results table
+
+History of queries
+
+Save query as dashboard widget
+
+⚙️ Backend Functional Requirements (important)
+Steampipe Execution
+
+Backend must support:
+
+steampipe check aws_thrifty.benchmark.ec2
+steampipe check aws_thrifty.control.ebs_volume_unused
+steampipe query "select * from aws_ec2_instance"
+
+JSON Parsing Rules
+
+Convert Steampipe/Powerpipe output to JSON objects:
+
+control → {control_id, title, severity, description}
+
+benchmark → {name, controls_passed, controls_failed}
+
+finding → {resource_id, region, service, reason, savings}
+
+Savings Calculation (from Thrifty mod formulas)
+
+Implement formulas based on AWS Pricing:
+
+Idle EC2 = instance hourly cost * hours * 30
+
+Unused EBS = cost per GB * provisioned size
+
+Low-access S3 = move to IA or Glacier
+
+Underutilized RDS = downgrade instance class
+
+etc.
+
+📄 Exporting Reports
+
+Support CSV/PDF:
+
+Benchmark summary
+
+Failed controls
+
+Savings opportunities
+
+Resources list
+
+SQL query output
+
+🔒 Security & Auth
+
+Email/password login
+
+JWT-based session
+
+Admin:
+
+Manage Steampipe connections
+
+Manage settings
+
+Trigger full scans
+
+Viewer:
+
+View dashboards only
+
+🧪 Test Scenarios
+
+Verify Steampipe command execution works
+
+Ensure UI renders Powerpipe dashboards
+
+Validate JSON transformation
+
+Stress test multiple concurrent scans
+
+Ensure SQL editor outputs valid tables
+
+📦 Final Deliverables
+
+Fully working React + Node.js codebase
+
+Docker-compose with Steampipe installed
+
+UI that fully visualizes:
+
+15 AWS Thrifty benchmarks
+
+41 controls
+
+All resource findings & graphs
+
+Powerpipe dashboards
+
+API documentation
+
+Deployment guide
+
+Example datasets

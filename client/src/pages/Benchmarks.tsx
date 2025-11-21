@@ -1,0 +1,264 @@
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Play, CheckCircle2, XCircle } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { isUnauthorizedError } from "@/lib/authUtils";
+
+interface Benchmark {
+  id: string;
+  name: string;
+  description: string;
+  totalControls: number;
+  passedControls: number;
+  failedControls: number;
+  estimatedSavings: number;
+  service: string;
+}
+
+const benchmarks: Benchmark[] = [
+  {
+    id: "ec2",
+    name: "EC2 Cost Optimization",
+    description: "Identify underutilized and idle EC2 instances",
+    totalControls: 8,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "EC2",
+  },
+  {
+    id: "ebs",
+    name: "EBS Volume Optimization",
+    description: "Find unused and unattached EBS volumes",
+    totalControls: 5,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "EBS",
+  },
+  {
+    id: "rds",
+    name: "RDS Database Optimization",
+    description: "Optimize RDS instance sizes and storage",
+    totalControls: 6,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "RDS",
+  },
+  {
+    id: "s3",
+    name: "S3 Storage Optimization",
+    description: "Identify opportunities for S3 storage class optimization",
+    totalControls: 4,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "S3",
+  },
+  {
+    id: "elb",
+    name: "Load Balancer Optimization",
+    description: "Find unused and idle load balancers",
+    totalControls: 3,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "ELB",
+  },
+  {
+    id: "lambda",
+    name: "Lambda Function Optimization",
+    description: "Optimize Lambda memory and execution time",
+    totalControls: 4,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "Lambda",
+  },
+  {
+    id: "cloudfront",
+    name: "CloudFront Distribution Optimization",
+    description: "Optimize CloudFront configurations and caching",
+    totalControls: 2,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "CloudFront",
+  },
+  {
+    id: "elasticache",
+    name: "ElastiCache Optimization",
+    description: "Identify underutilized ElastiCache clusters",
+    totalControls: 3,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "ElastiCache",
+  },
+  {
+    id: "redshift",
+    name: "Redshift Optimization",
+    description: "Optimize Redshift cluster sizing and usage",
+    totalControls: 2,
+    passedControls: 0,
+    failedControls: 0,
+    estimatedSavings: 0,
+    service: "Redshift",
+  },
+];
+
+export default function Benchmarks() {
+  const { toast } = useToast();
+
+  const { data: results, isLoading } = useQuery({
+    queryKey: ["/api/benchmarks/results"],
+  });
+
+  const runBenchmarkMutation = useMutation({
+    mutationFn: async (benchmarkId: string) => {
+      await apiRequest("POST", "/api/benchmarks/run", { benchmarkId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/benchmarks/results"] });
+      toast({
+        title: "Success",
+        description: "Benchmark executed successfully",
+      });
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to run benchmark",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const formatCurrency = (cents: number) => {
+    return `$${(cents / 100).toFixed(2)}`;
+  };
+
+  const getProgressPercentage = (passed: number, total: number) => {
+    if (total === 0) return 0;
+    return Math.round((passed / total) * 100);
+  };
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-3xl font-semibold">Benchmarks</h1>
+        <p className="text-sm text-muted-foreground mt-2">
+          Run cost optimization benchmarks across your AWS services
+        </p>
+      </div>
+
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Card key={i}>
+              <CardHeader className="space-y-2">
+                <Skeleton className="h-6 w-40" />
+                <Skeleton className="h-4 w-full" />
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-20 w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {benchmarks.map((benchmark) => {
+            const progress = getProgressPercentage(
+              benchmark.passedControls,
+              benchmark.totalControls
+            );
+
+            return (
+              <Card key={benchmark.id} className="hover-elevate">
+                <CardHeader className="space-y-2 pb-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                      <CardTitle className="text-lg">{benchmark.name}</CardTitle>
+                      <Badge variant="secondary" data-testid={`badge-service-${benchmark.id}`}>
+                        {benchmark.service}
+                      </Badge>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {benchmark.description}
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Progress</span>
+                      <span className="font-medium">{progress}%</span>
+                    </div>
+                    <Progress value={progress} />
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Passed
+                    </span>
+                    <span className="font-medium" data-testid={`text-passed-${benchmark.id}`}>
+                      {benchmark.passedControls}/{benchmark.totalControls}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <XCircle className="h-3 w-3" />
+                      Failed
+                    </span>
+                    <span className="font-medium text-destructive" data-testid={`text-failed-${benchmark.id}`}>
+                      {benchmark.failedControls}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2 border-t">
+                    <span className="text-sm text-muted-foreground">Est. Savings</span>
+                    <span className="font-semibold text-primary" data-testid={`text-savings-${benchmark.id}`}>
+                      {formatCurrency(benchmark.estimatedSavings)}/mo
+                    </span>
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    onClick={() => runBenchmarkMutation.mutate(benchmark.id)}
+                    disabled={runBenchmarkMutation.isPending}
+                    data-testid={`button-run-${benchmark.id}`}
+                  >
+                    <Play className="h-4 w-4 mr-2" />
+                    {runBenchmarkMutation.isPending ? "Running..." : "Run Benchmark"}
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
