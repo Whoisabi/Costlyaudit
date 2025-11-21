@@ -184,7 +184,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Run the actual benchmark against real AWS resources
       const result = await awsService.runBenchmark(benchmarkId);
       
-      // Save the benchmark result to database
+      // Save the benchmark result to database (including individual resource checks)
       await storage.saveBenchmarkResult({
         awsAccountId: account.id,
         benchmarkId: result.benchmarkId,
@@ -193,7 +193,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         controlsFailed: result.controlsFailed,
         estimatedSavings: result.estimatedSavings,
         resultJson: { checks: result.checks },
-      });
+      }, result.checks);
 
       res.json({ success: true, result });
     } catch (error: any) {
@@ -222,6 +222,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         message: "Failed to run benchmark. Please check your AWS credentials and try again." 
       });
+    }
+  });
+
+  // Get detailed resource checks for a specific benchmark
+  app.get("/api/benchmarks/:id/resources", isAuthenticated, async (req: any, res) => {
+    try {
+      const benchmarkResultId = req.params.id;
+      const resources = await storage.getControlResultsByBenchmark(benchmarkResultId);
+      
+      const formattedResources = resources.map(control => ({
+        id: control.id,
+        resourceId: control.resourceId || 'N/A',
+        resourceType: control.resourceType || 'Unknown',
+        controlName: control.controlName,
+        passed: control.passed,
+        reason: control.reason || `Resource optimization opportunity: ${control.controlName}`,
+        estimatedSavings: control.estimatedSavings,
+        executedAt: control.executedAt,
+      }));
+      
+      res.json(formattedResources);
+    } catch (error) {
+      console.error("Error fetching benchmark resources:", error);
+      res.status(500).json({ message: "Failed to fetch benchmark resources" });
     }
   });
 
@@ -271,7 +295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Resources route
+  // Resources route - returns all resources with cost optimization recommendations
   app.get("/api/resources", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -280,17 +304,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let allResources: any[] = [];
       for (const account of accounts) {
         const controls = await storage.getControlResults(account.id);
-        const resources = controls.map(control => ({
-          id: control.id,
-          resourceId: `resource-${control.id}`,
-          resourceType: control.controlName,
-          service: control.controlId.split('_')[0].toUpperCase(),
-          region: account.region,
-          status: control.status,
-          reason: `Control ${control.controlName} ${control.status}`,
-          savingsPotential: control.estimatedSavings,
-          awsConsoleUrl: `https://console.aws.amazon.com/${control.controlId}`,
-        }));
+        const resources = controls
+          .filter(control => !control.passed) // Only show failed checks (optimization opportunities)
+          .map(control => ({
+            id: control.id,
+            resourceId: control.resourceId || 'N/A',
+            resourceType: control.resourceType || 'Unknown',
+            controlName: control.controlName,
+            service: control.resourceType || 'Unknown',
+            region: account.region,
+            status: control.passed ? 'passed' : 'failed',
+            reason: control.reason || `Resource optimization opportunity: ${control.controlName}`,
+            savingsPotential: control.estimatedSavings,
+            awsConsoleUrl: control.resourceId 
+              ? `https://console.aws.amazon.com`
+              : undefined,
+          }));
         allResources = [...allResources, ...resources];
       }
       

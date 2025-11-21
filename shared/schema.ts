@@ -74,17 +74,18 @@ export const benchmarkResults = pgTable("benchmark_results", {
 
 export type BenchmarkResult = typeof benchmarkResults.$inferSelect;
 
-// Control results table
+// Control results table - stores individual resource checks from benchmarks
 export const controlResults = pgTable("control_results", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  benchmarkResultId: varchar("benchmark_result_id").notNull().references(() => benchmarkResults.id, { onDelete: "cascade" }),
   awsAccountId: varchar("aws_account_id").notNull().references(() => awsAccounts.id, { onDelete: "cascade" }),
   controlId: varchar("control_id", { length: 255 }).notNull(),
-  controlName: varchar("control_name", { length: 255 }).notNull(),
-  severity: varchar("severity", { length: 50 }).notNull(),
-  status: varchar("status", { length: 50 }).notNull(), // passed, failed, error
-  affectedResources: integer("affected_resources").notNull().default(0),
+  controlName: text("control_name").notNull(),
+  resourceId: varchar("resource_id", { length: 255 }), // AWS resource ID (instance-id, bucket name, etc.)
+  resourceType: varchar("resource_type", { length: 100 }), // EC2, S3, RDS, etc.
+  passed: boolean("passed").notNull().default(false),
+  reason: text("reason"), // Why this check failed/passed
   estimatedSavings: integer("estimated_savings").notNull().default(0), // in cents
-  resultJson: jsonb("result_json"),
   executedAt: timestamp("executed_at").defaultNow(),
 });
 

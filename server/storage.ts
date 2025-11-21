@@ -44,6 +44,16 @@ export type AwsAccountDisplay = Omit<AwsAccount, 'secretAccessKey'> & {
   secretAccessKey: string; // Will be "***ENCRYPTED***"
 };
 
+// Type for individual resource check from AWS service
+export interface ResourceCheck {
+  id: string;
+  name: string;
+  passed: boolean;
+  resourceId?: string;
+  estimatedSavings: number;
+  reason?: string;
+}
+
 export interface IStorage {
   // User operations (mandatory for Replit Auth)
   getUser(id: string): Promise<User | undefined>;
@@ -60,12 +70,16 @@ export interface IStorage {
   createAwsAccountForDisplay(account: InsertAwsAccount): Promise<AwsAccountDisplay>;
 
   // Benchmark operations
-  saveBenchmarkResult(result: Omit<BenchmarkResult, "id" | "executedAt">): Promise<BenchmarkResult>;
+  saveBenchmarkResult(
+    result: Omit<BenchmarkResult, "id" | "executedAt">, 
+    checks: ResourceCheck[]
+  ): Promise<BenchmarkResult>;
   getBenchmarkResults(awsAccountId: string): Promise<BenchmarkResult[]>;
 
   // Control operations
   saveControlResult(result: Omit<ControlResult, "id" | "executedAt">): Promise<ControlResult>;
   getControlResults(awsAccountId: string): Promise<ControlResult[]>;
+  getControlResultsByBenchmark(benchmarkResultId: string): Promise<ControlResult[]>;
 
   // Query history operations
   saveQuery(userId: string, awsAccountId: string | null, query: string, resultJson: any): Promise<QueryHistory>;
@@ -183,11 +197,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Benchmark operations
-  async saveBenchmarkResult(result: Omit<BenchmarkResult, "id" | "executedAt">): Promise<BenchmarkResult> {
+  async saveBenchmarkResult(
+    result: Omit<BenchmarkResult, "id" | "executedAt">,
+    checks: ResourceCheck[]
+  ): Promise<BenchmarkResult> {
     const [saved] = await db
       .insert(benchmarkResults)
       .values(result)
       .returning();
+    
+    // Save individual resource checks as control results
+    if (checks.length > 0) {
+      const controlResultsToInsert = checks.map(check => ({
+        benchmarkResultId: saved.id,
+        awsAccountId: result.awsAccountId,
+        controlId: check.id,
+        controlName: check.name,
+        resourceId: check.resourceId || null,
+        resourceType: result.benchmarkId.toUpperCase(),
+        passed: check.passed,
+        reason: check.reason,
+        estimatedSavings: check.estimatedSavings,
+      }));
+      
+      await db.insert(controlResults).values(controlResultsToInsert);
+    }
+    
     return saved;
   }
 
@@ -213,6 +248,14 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(controlResults)
       .where(eq(controlResults.awsAccountId, awsAccountId))
+      .orderBy(desc(controlResults.executedAt));
+  }
+
+  async getControlResultsByBenchmark(benchmarkResultId: string): Promise<ControlResult[]> {
+    return await db
+      .select()
+      .from(controlResults)
+      .where(eq(controlResults.benchmarkResultId, benchmarkResultId))
       .orderBy(desc(controlResults.executedAt));
   }
 
