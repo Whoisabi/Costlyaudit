@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { insertAwsAccountSchema } from "@shared/schema";
 import { z } from "zod";
+import { AwsService } from "./aws-service";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -149,29 +150,124 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.claims.sub;
       const { benchmarkId } = req.body;
       
+      // Validate benchmarkId
+      const validBenchmarks = ['ec2', 'rds', 's3', 'dynamodb', 'elasticache', 'redshift', 'lambda'];
+      if (!benchmarkId || !validBenchmarks.includes(benchmarkId)) {
+        res.status(400).json({ 
+          message: "Invalid benchmark ID", 
+          validBenchmarks 
+        });
+        return;
+      }
+      
       const accounts = await storage.getAwsAccounts(userId);
       if (accounts.length === 0) {
-        res.status(400).json({ message: "No AWS accounts connected" });
+        res.status(400).json({ message: "No AWS accounts connected. Please add an AWS account first." });
         return;
       }
 
-      // Simulate benchmark execution (in real implementation, call Steampipe)
       const account = accounts[0];
       
-      await storage.saveBenchmarkResult({
-        awsAccountId: account.id,
-        benchmarkId,
-        benchmarkName: benchmarkId.toUpperCase(),
-        controlsPassed: Math.floor(Math.random() * 10),
-        controlsFailed: Math.floor(Math.random() * 5),
-        estimatedSavings: Math.floor(Math.random() * 50000),
-        resultJson: { message: "Benchmark executed successfully" },
+      // Validate credentials exist
+      if (!account.accessKeyId || !account.secretAccessKey) {
+        res.status(400).json({ message: "AWS credentials are missing or invalid" });
+        return;
+      }
+      
+      // Use real AWS scanning with decrypted credentials
+      const awsService = new AwsService({
+        accessKeyId: account.accessKeyId,
+        secretAccessKey: account.secretAccessKey,
+        region: account.region,
       });
 
-      res.json({ success: true });
-    } catch (error) {
+      // Run the actual benchmark against real AWS resources
+      const result = await awsService.runBenchmark(benchmarkId);
+      
+      // Save the benchmark result to database
+      await storage.saveBenchmarkResult({
+        awsAccountId: account.id,
+        benchmarkId: result.benchmarkId,
+        benchmarkName: result.benchmarkName,
+        controlsPassed: result.controlsPassed,
+        controlsFailed: result.controlsFailed,
+        estimatedSavings: result.estimatedSavings,
+        resultJson: { checks: result.checks },
+      });
+
+      res.json({ success: true, result });
+    } catch (error: any) {
       console.error("Error running benchmark:", error);
-      res.status(500).json({ message: "Failed to run benchmark" });
+      
+      // Provide more specific error messages for AWS credential issues
+      if (error.name === 'CredentialsError' || error.name === 'InvalidClientTokenId') {
+        res.status(401).json({ 
+          message: "AWS credentials are invalid or expired. Please update your credentials." 
+        });
+        return;
+      }
+      
+      if (error.name === 'UnauthorizedException' || error.name === 'AccessDeniedException') {
+        res.status(403).json({ 
+          message: "AWS credentials do not have sufficient permissions to run this benchmark." 
+        });
+        return;
+      }
+      
+      if (error.message?.includes('Unknown benchmark')) {
+        res.status(400).json({ message: error.message });
+        return;
+      }
+      
+      res.status(500).json({ 
+        message: "Failed to run benchmark. Please check your AWS credentials and try again." 
+      });
+    }
+  });
+
+  // Get active AWS services (to show only relevant benchmarks)
+  app.get("/api/benchmarks/active-services", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const accounts = await storage.getAwsAccounts(userId);
+      
+      if (accounts.length === 0) {
+        res.json({ services: [] });
+        return;
+      }
+
+      const account = accounts[0];
+      
+      // Validate credentials exist
+      if (!account.accessKeyId || !account.secretAccessKey) {
+        res.json({ services: [], error: "AWS credentials are missing" });
+        return;
+      }
+      
+      const awsService = new AwsService({
+        accessKeyId: account.accessKeyId,
+        secretAccessKey: account.secretAccessKey,
+        region: account.region,
+      });
+
+      const activeServices = await awsService.getActiveServices();
+      res.json({ services: activeServices });
+    } catch (error: any) {
+      console.error("Error fetching active services:", error);
+      
+      // Provide helpful error messages
+      if (error.name === 'CredentialsError' || error.name === 'InvalidClientTokenId') {
+        res.json({ 
+          services: [], 
+          error: "AWS credentials are invalid or expired" 
+        });
+        return;
+      }
+      
+      res.json({ 
+        services: [], 
+        error: "Failed to detect active services" 
+      });
     }
   });
 
