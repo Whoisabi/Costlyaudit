@@ -41,7 +41,8 @@ export default function SqlExplorer() {
 
   const executeMutation = useMutation({
     mutationFn: async (sql: string) => {
-      return await apiRequest("POST", "/api/queries/execute", { query: sql });
+      const response = await apiRequest("POST", "/api/queries/execute", { query: sql });
+      return await response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/queries/history"] });

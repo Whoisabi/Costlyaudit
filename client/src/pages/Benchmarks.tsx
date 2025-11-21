@@ -20,104 +20,97 @@ interface Benchmark {
   service: string;
 }
 
-const benchmarks: Benchmark[] = [
-  {
-    id: "ec2",
+const benchmarkMetadata: Record<string, { name: string; description: string; totalControls: number; service: string }> = {
+  "ec2": {
     name: "EC2 Cost Optimization",
     description: "Identify underutilized and idle EC2 instances",
     totalControls: 8,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "EC2",
   },
-  {
-    id: "ebs",
+  "ebs": {
     name: "EBS Volume Optimization",
     description: "Find unused and unattached EBS volumes",
     totalControls: 5,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "EBS",
   },
-  {
-    id: "rds",
+  "rds": {
     name: "RDS Database Optimization",
     description: "Optimize RDS instance sizes and storage",
     totalControls: 6,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "RDS",
   },
-  {
-    id: "s3",
+  "s3": {
     name: "S3 Storage Optimization",
     description: "Identify opportunities for S3 storage class optimization",
     totalControls: 4,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "S3",
   },
-  {
-    id: "elb",
+  "elb": {
     name: "Load Balancer Optimization",
     description: "Find unused and idle load balancers",
     totalControls: 3,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "ELB",
   },
-  {
-    id: "lambda",
+  "lambda": {
     name: "Lambda Function Optimization",
     description: "Optimize Lambda memory and execution time",
     totalControls: 4,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "Lambda",
   },
-  {
-    id: "cloudfront",
+  "cloudfront": {
     name: "CloudFront Distribution Optimization",
     description: "Optimize CloudFront configurations and caching",
     totalControls: 2,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "CloudFront",
   },
-  {
-    id: "elasticache",
+  "elasticache": {
     name: "ElastiCache Optimization",
     description: "Identify underutilized ElastiCache clusters",
     totalControls: 3,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "ElastiCache",
   },
-  {
-    id: "redshift",
+  "redshift": {
     name: "Redshift Optimization",
     description: "Optimize Redshift cluster sizing and usage",
     totalControls: 2,
-    passedControls: 0,
-    failedControls: 0,
-    estimatedSavings: 0,
     service: "Redshift",
   },
-];
+};
+
+// Normalize benchmark IDs to lowercase for consistent comparison
+const normalizeId = (id: string) => id.toLowerCase();
 
 export default function Benchmarks() {
   const { toast } = useToast();
 
-  const { data: results, isLoading } = useQuery({
+  const { data: apiResults, isLoading } = useQuery<Array<{
+    id: string;
+    awsAccountId: string;
+    benchmarkId: string;
+    benchmarkName: string;
+    controlsPassed: number;
+    controlsFailed: number;
+    estimatedSavings: number;
+    executedAt: string;
+  }>>({
     queryKey: ["/api/benchmarks/results"],
+  });
+
+  // Merge API results with metadata, showing all available benchmarks
+  const benchmarks: Benchmark[] = Object.keys(benchmarkMetadata).map((benchmarkId) => {
+    const metadata = benchmarkMetadata[benchmarkId];
+    const apiResult = apiResults?.find(r => normalizeId(r.benchmarkId) === normalizeId(benchmarkId));
+    
+    return {
+      id: benchmarkId,
+      name: metadata.name,
+      description: metadata.description,
+      totalControls: metadata.totalControls,
+      service: metadata.service,
+      passedControls: apiResult?.controlsPassed || 0,
+      failedControls: apiResult?.controlsFailed || 0,
+      estimatedSavings: apiResult?.estimatedSavings || 0,
+    };
   });
 
   const runBenchmarkMutation = useMutation({
