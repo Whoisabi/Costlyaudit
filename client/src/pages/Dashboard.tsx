@@ -1,8 +1,13 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { DollarSign, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import CostSummary from "@/components/CostSummary";
+import { AllServicesCosts } from "@/components/AllServicesCosts";
+import { CostRecommendationsPanel } from "@/components/CostRecommendations";
 import {
   BarChart,
   Bar,
@@ -35,6 +40,8 @@ const COLORS = [
 ];
 
 export default function Dashboard() {
+  const [includeCredits, setIncludeCredits] = useState(true);
+
   const { data: stats, isLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard/stats"],
   });
@@ -70,15 +77,32 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 space-y-8">
-      <div>
-        <h1 className="text-3xl font-semibold">Dashboard</h1>
-        <p className="text-sm text-muted-foreground mt-2">
-          Overview of your AWS cost optimization opportunities
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-semibold">Dashboard</h1>
+          <p className="text-sm text-muted-foreground mt-2">
+            Overview of your AWS cost optimization opportunities
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="global-credits-toggle"
+            checked={includeCredits}
+            onCheckedChange={setIncludeCredits}
+            data-testid="switch-global-credits"
+          />
+          <Label htmlFor="global-credits-toggle" className="text-sm cursor-pointer">
+            {includeCredits ? 'With Credits' : 'Without Credits'}
+          </Label>
+        </div>
       </div>
 
       {/* AWS Cost Comparison */}
-      <CostSummary />
+      <CostSummary 
+        includeCredits={includeCredits}
+        onIncludeCreditsChange={setIncludeCredits}
+        showToggle={false}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
@@ -196,6 +220,12 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* All Services Costs - shows ALL services with costs, clickable to see resource details */}
+      <AllServicesCosts includeCredits={includeCredits} />
+
+      {/* Cost Optimization Recommendations */}
+      <CostRecommendationsPanel />
     </div>
   );
 }

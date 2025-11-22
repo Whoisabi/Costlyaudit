@@ -951,7 +951,7 @@ export class AwsService {
       try {
         const riResponse = await this.costExplorerClient.send(
           new GetReservationPurchaseRecommendationCommand({
-            Service: 'Amazon Elastic Compute Cloud',
+            Service: 'Amazon Elastic Compute Cloud - Compute',
             PaymentOption: 'NO_UPFRONT',
             TermInYears: 'ONE_YEAR',
             LookbackPeriodInDays: 'THIRTY_DAYS',
@@ -1025,28 +1025,37 @@ export class AwsService {
 
         const recommendations = rightSizeResponse.RightsizingRecommendations || [];
         for (const rec of recommendations) {
-          if (rec.RightsizingType !== 'Modify') continue;
+          // Type-safe check for Modify type
+          if (rec.RightsizingType?.toLowerCase() !== 'modify') continue;
 
           const current = rec.CurrentInstance;
           const target = rec.ModifyRecommendationDetail?.TargetInstances?.[0];
 
           if (!current || !target) continue;
 
+          // Extract tag value safely
+          const nameTag = current.Tags?.find(t => t.Key === 'Name');
+          const resourceName = nameTag?.Values?.[0];
+
+          // Get instance types safely
+          const currentType = current.ResourceDetails?.EC2ResourceDetails?.InstanceType || 'Unknown';
+          const targetType = (target as any).DefaultTargetInstance?.InstanceType || 'Unknown';
+
+          // Calculate savings percentage from available data
+          const monthlySavings = parseFloat(target.EstimatedMonthlySavings || '0');
+          const monthlyCost = parseFloat(target.EstimatedMonthlyCost || '0');
+          const savingsPercentage = monthlyCost > 0 
+            ? ((monthlySavings / monthlyCost) * 100) 
+            : 0;
+
           rightsizingRecommendations.push({
             resourceId: current.ResourceId || 'Unknown',
-            resourceName: current.Tags?.find(t => t.Key === 'Name')?.Value,
-            currentInstanceType: current.InstanceType || 'Unknown',
-            recommendedInstanceType: target.TargetInstanceType || 'Unknown',
+            resourceName: resourceName,
+            currentInstanceType: currentType,
+            recommendedInstanceType: targetType,
             region: current.ResourceDetails?.EC2ResourceDetails?.Region || 'Unknown',
-            estimatedMonthlySavings: Math.round(
-              parseFloat(target.EstimatedMonthlySavings || '0') * 100
-            ),
-            estimatedSavingsPercentage: parseFloat(
-              target.EstimatedReservationCostForLookbackPeriod
-                ? ((parseFloat(target.EstimatedMonthlySavings || '0') / 
-                   parseFloat(target.EstimatedReservationCostForLookbackPeriod)) * 100).toString()
-                : '0'
-            ),
+            estimatedMonthlySavings: Math.round(monthlySavings * 100),
+            estimatedSavingsPercentage: savingsPercentage,
             reason: `Instance is underutilized. Current average CPU: ${
               current.ResourceUtilization?.EC2ResourceUtilization?.MaxCpuUtilizationPercentage || 'Unknown'
             }%`,

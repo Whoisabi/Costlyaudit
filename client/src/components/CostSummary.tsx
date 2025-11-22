@@ -8,8 +8,22 @@ import { TrendingUp, TrendingDown, DollarSign, Minus } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { CostSummary } from "@shared/schema";
 
-export default function CostSummary() {
-  const [includeCredits, setIncludeCredits] = useState(true);
+interface CostSummaryProps {
+  includeCredits?: boolean;
+  onIncludeCreditsChange?: (value: boolean) => void;
+  showToggle?: boolean;
+}
+
+export default function CostSummary({ 
+  includeCredits: externalIncludeCredits,
+  onIncludeCreditsChange,
+  showToggle = true 
+}: CostSummaryProps) {
+  const [internalIncludeCredits, setInternalIncludeCredits] = useState(true);
+  
+  // Use external state if provided, otherwise use internal state
+  const includeCredits = externalIncludeCredits ?? internalIncludeCredits;
+  const setIncludeCredits = onIncludeCreditsChange ?? setInternalIncludeCredits;
 
   const { data: costData, isLoading, error } = useQuery<CostSummary>({
     queryKey: ["/api/costs/summary", { includeCredits }],
@@ -75,17 +89,19 @@ export default function CostSummary() {
     <Card data-testid="card-cost-summary">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4 space-y-0 pb-4">
         <CardTitle className="text-lg font-semibold">AWS Cost Comparison</CardTitle>
-        <div className="flex items-center gap-2">
-          <Switch
-            id="include-credits"
-            checked={includeCredits}
-            onCheckedChange={setIncludeCredits}
-            data-testid="switch-include-credits"
-          />
-          <Label htmlFor="include-credits" className="text-sm cursor-pointer">
-            {includeCredits ? 'With Credits' : 'Without Credits'}
-          </Label>
-        </div>
+        {showToggle && (
+          <div className="flex items-center gap-2">
+            <Switch
+              id="cost-summary-credits"
+              checked={includeCredits}
+              onCheckedChange={setIncludeCredits}
+              data-testid="switch-cost-summary-credits"
+            />
+            <Label htmlFor="cost-summary-credits" className="text-sm cursor-pointer">
+              {includeCredits ? 'With Credits' : 'Without Credits'}
+            </Label>
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Cost Comparison Cards */}

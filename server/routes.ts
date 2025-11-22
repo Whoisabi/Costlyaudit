@@ -2,7 +2,14 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { insertAwsAccountSchema, costSummarySchema, type CostSummary } from "@shared/schema";
+import { 
+  insertAwsAccountSchema, 
+  costSummarySchema, 
+  type CostSummary,
+  type ServiceBreakdown,
+  type ServiceResources,
+  type CostRecommendations,
+} from "@shared/schema";
 import { z } from "zod";
 import { AwsService } from "./aws-service";
 
@@ -418,6 +425,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.status(500).json({ 
         message: error.message || "Failed to fetch cost summary" 
+      });
+    }
+  });
+
+  // All Services Costs route - returns ALL services with costs (not just top 5)
+  app.get("/api/costs/services", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const includeCredits = req.query.includeCredits !== 'false';
+      
+      const accounts = await storage.getAwsAccounts(userId);
+      if (accounts.length === 0) {
+        res.status(400).json({ 
+          message: "No AWS accounts connected. Please add an AWS account first.",
+          action: "Go to AWS Accounts page to connect your first account."
+        });
+        return;
+      }
+
+      // TODO: Add multi-account support - currently showing costs for first account only
+      // Future enhancement: aggregate costs across all accounts or allow account selection
+      const account = accounts[0];
+      
+      if (!account.accessKeyId || !account.secretAccessKey) {
+        res.status(400).json({ 
+          message: "AWS credentials are missing or invalid" 
+        });
+        return;
+      }
+      
+      const awsService = new AwsService({
+        accessKeyId: account.accessKeyId,
+        secretAccessKey: account.secretAccessKey,
+        region: account.region,
+      });
+
+      const services: ServiceBreakdown[] = await awsService.getAllServicesCosts(includeCredits);
+      res.json(services);
+    } catch (error: any) {
+      console.error("Error fetching services costs:", error);
+      
+      if (error.name === 'AccessDeniedException' || error.message?.includes('permission')) {
+        res.status(403).json({ 
+          message: "AWS credentials do not have permission to access Cost Explorer.",
+          action: "Add the 'ce:GetCostAndUsage' permission to your IAM user or role in the AWS Console."
+        });
+        return;
+      }
+      
+      res.status(500).json({ 
+        message: error.message || "Failed to fetch services costs" 
+      });
+    }
+  });
+
+  // Service Resources route - returns detailed resource breakdown for a specific service
+  app.get("/api/costs/services/:serviceCode/resources", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { serviceCode } = req.params;
+      const includeCredits = req.query.includeCredits !== 'false';
+      
+      const accounts = await storage.getAwsAccounts(userId);
+      if (accounts.length === 0) {
+        res.status(400).json({ 
+          message: "No AWS accounts connected. Please add an AWS account first." 
+        });
+        return;
+      }
+
+      const account = accounts[0];
+      
+      if (!account.accessKeyId || !account.secretAccessKey) {
+        res.status(400).json({ 
+          message: "AWS credentials are missing or invalid" 
+        });
+        return;
+      }
+      
+      const awsService = new AwsService({
+        accessKeyId: account.accessKeyId,
+        secretAccessKey: account.secretAccessKey,
+        region: account.region,
+      });
+
+      const serviceResources: ServiceResources = await awsService.getServiceResourceCosts(
+        decodeURIComponent(serviceCode),
+        includeCredits
+      );
+      res.json(serviceResources);
+    } catch (error: any) {
+      console.error("Error fetching service resources:", error);
+      
+      if (error.name === 'AccessDeniedException' || error.message?.includes('permission')) {
+        res.status(403).json({ 
+          message: "AWS credentials do not have permission to access Cost Explorer.",
+          action: "Add the 'ce:GetCostAndUsage' permission to your IAM user or role in the AWS Console."
+        });
+        return;
+      }
+      
+      res.status(500).json({ 
+        message: error.message || "Failed to fetch service resources" 
+      });
+    }
+  });
+
+  // Cost Recommendations route - returns RI, Savings Plans, and Rightsizing recommendations
+  app.get("/api/costs/recommendations", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      const accounts = await storage.getAwsAccounts(userId);
+      if (accounts.length === 0) {
+        res.status(400).json({ 
+          message: "No AWS accounts connected. Please add an AWS account first." 
+        });
+        return;
+      }
+
+      const account = accounts[0];
+      
+      if (!account.accessKeyId || !account.secretAccessKey) {
+        res.status(400).json({ 
+          message: "AWS credentials are missing or invalid" 
+        });
+        return;
+      }
+      
+      const awsService = new AwsService({
+        accessKeyId: account.accessKeyId,
+        secretAccessKey: account.secretAccessKey,
+        region: account.region,
+      });
+
+      const recommendations: CostRecommendations = await awsService.getCostRecommendations();
+      res.json(recommendations);
+    } catch (error: any) {
+      console.error("Error fetching cost recommendations:", error);
+      
+      if (error.name === 'AccessDeniedException' || error.message?.includes('permission')) {
+        res.status(403).json({ 
+          message: "AWS credentials do not have permission to access Cost Explorer recommendations. Ensure your IAM user has ce:GetReservationPurchaseRecommendation, ce:GetSavingsPlansPurchaseRecommendation, and ce:GetRightsizingRecommendation permissions." 
+        });
+        return;
+      }
+      
+      res.status(500).json({ 
+        message: error.message || "Failed to fetch cost recommendations" 
       });
     }
   });
