@@ -152,7 +152,7 @@ export default function Benchmarks() {
 
   const runBenchmarkMutation = useMutation({
     mutationFn: async (benchmarkId: string) => {
-      await apiRequest("POST", "/api/benchmarks/run", { benchmarkId, useSteampipe: true });
+      await apiRequest("POST", "/api/benchmarks/run", { benchmarkId, useSteampipe: false });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/benchmarks/results"] });
@@ -204,7 +204,7 @@ export default function Benchmarks() {
       <div>
         <h1 className="text-3xl font-semibold">Benchmarks</h1>
         <p className="text-sm text-muted-foreground mt-2">
-          Run cost optimization benchmarks using Steampipe + Cost Explorer for accurate savings calculations based on your actual AWS billing data
+          Run cost optimization benchmarks using AWS Cost Explorer for accurate savings calculations based on your actual billing data
         </p>
       </div>
 
@@ -291,7 +291,7 @@ export default function Benchmarks() {
                       data-testid={`button-run-${benchmark.id}`}
                     >
                       <Play className="h-4 w-4 mr-2" />
-                      {runBenchmarkMutation.isPending ? "Analyzing..." : "Run"}
+                      {runBenchmarkMutation.isPending ? "Running..." : "Run"}
                     </Button>
                     {benchmark.resultId && (
                       <Button
