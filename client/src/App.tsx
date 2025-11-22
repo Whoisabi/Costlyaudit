@@ -10,6 +10,8 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { useAuth } from "@/hooks/useAuth";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/Landing";
+import Login from "@/pages/Login";
+import Signup from "@/pages/Signup";
 import Home from "@/pages/Home";
 import Dashboard from "@/pages/Dashboard";
 import Benchmarks from "@/pages/Benchmarks";
@@ -25,6 +27,8 @@ function Router() {
     return (
       <Switch>
         <Route path="/" component={Landing} />
+        <Route path="/login" component={Login} />
+        <Route path="/signup" component={Signup} />
         <Route component={NotFound} />
       </Switch>
     );

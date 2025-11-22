@@ -17,14 +17,25 @@ export default function Landing() {
             </p>
           </div>
 
-          <Button
-            size="lg"
-            onClick={() => (window.location.href = "/api/login")}
-            data-testid="button-login"
-            className="text-lg px-8"
-          >
-            Get Started
-          </Button>
+          <div className="flex flex-wrap gap-4 items-center justify-center">
+            <Button
+              size="lg"
+              onClick={() => (window.location.href = "/login")}
+              data-testid="button-login"
+              className="text-lg px-8"
+            >
+              Log In
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => (window.location.href = "/signup")}
+              data-testid="button-signup"
+              className="text-lg px-8"
+            >
+              Sign Up
+            </Button>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-12 w-full">
             <Card>
