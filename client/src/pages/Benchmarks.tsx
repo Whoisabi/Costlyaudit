@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Play, CheckCircle2, XCircle, ChevronRight } from "lucide-react";
+import { Play, CheckCircle2, XCircle, ChevronRight, AlertTriangle } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
@@ -291,9 +291,7 @@ export default function Benchmarks() {
                       data-testid={`button-run-${benchmark.id}`}
                     >
                       <Play className="h-4 w-4 mr-2" />
-                      {runBenchmarkMutation.isPending 
-                        ? (useSteampipe ? "Analyzing..." : "Running...")
-                        : "Run"}
+                      {runBenchmarkMutation.isPending ? "Analyzing..." : "Run"}
                     </Button>
                     {benchmark.resultId && (
                       <Button
