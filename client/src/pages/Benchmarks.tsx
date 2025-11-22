@@ -208,6 +208,18 @@ export default function Benchmarks() {
         </p>
       </div>
 
+      <Card className="border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20">
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500" />
+            Savings Calculations Not Yet Available
+          </CardTitle>
+          <CardDescription>
+            Benchmark checks identify potential optimization opportunities, but accurate savings calculations require Steampipe/Powerpipe integration (coming soon). All savings amounts are currently $0 until this integration is complete.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -277,8 +289,8 @@ export default function Benchmarks() {
 
                   <div className="flex items-center justify-between pt-2 border-t">
                     <span className="text-sm text-muted-foreground">Est. Savings</span>
-                    <span className="font-semibold text-primary" data-testid={`text-savings-${benchmark.id}`}>
-                      {formatCurrency(benchmark.estimatedSavings)}/mo
+                    <span className="text-sm text-muted-foreground italic" data-testid={`text-savings-${benchmark.id}`}>
+                      {benchmark.estimatedSavings === 0 ? "TBD" : formatCurrency(benchmark.estimatedSavings) + "/mo"}
                     </span>
                   </div>
 
@@ -369,8 +381,8 @@ export default function Benchmarks() {
                             <span className="text-sm">{resource.reason}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right font-semibold text-primary">
-                          {formatCurrency(resource.estimatedSavings)}
+                        <TableCell className="text-right text-sm text-muted-foreground italic">
+                          {resource.estimatedSavings === 0 ? "TBD" : formatCurrency(resource.estimatedSavings)}
                         </TableCell>
                       </TableRow>
                     ))}

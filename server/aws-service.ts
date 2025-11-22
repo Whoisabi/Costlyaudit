@@ -131,7 +131,7 @@ export class AwsService {
             name: 'EC2 instance should not be stopped for more than 30 days',
             passed: false,
             resourceId: instance.InstanceId,
-            estimatedSavings: 2000, // $20/month average
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `Instance ${instance.InstanceId} is stopped but still incurring charges for EBS volumes`,
           });
         }
@@ -184,7 +184,7 @@ export class AwsService {
             name: 'Elastic IPs should be attached to instances',
             passed: false,
             resourceId: address.AllocationId,
-            estimatedSavings: 365, // $3.65/month
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `Elastic IP ${address.PublicIp} is unattached and incurring charges`,
           });
         }
@@ -232,7 +232,7 @@ export class AwsService {
             name: 'RDS instances should not be stopped for extended periods',
             passed: false,
             resourceId: instance.DBInstanceIdentifier,
-            estimatedSavings: 5000, // $50/month average
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `RDS instance ${instance.DBInstanceIdentifier} is stopped`,
           });
         }
@@ -244,7 +244,7 @@ export class AwsService {
             name: 'RDS instances should use current generation instance types',
             passed: false,
             resourceId: instance.DBInstanceIdentifier,
-            estimatedSavings: 3000, // $30/month potential savings
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `RDS instance ${instance.DBInstanceIdentifier} uses old generation instance type ${instance.DBInstanceClass}`,
           });
         }
@@ -263,7 +263,7 @@ export class AwsService {
             name: 'RDS snapshots should not be older than 90 days',
             passed: false,
             resourceId: snapshot.DBSnapshotIdentifier,
-            estimatedSavings: 500, // $5/month average
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `RDS snapshot ${snapshot.DBSnapshotIdentifier} is older than 90 days`,
           });
         }
@@ -312,7 +312,7 @@ export class AwsService {
               name: 'S3 buckets with versioning should have lifecycle policies',
               passed: false,
               resourceId: bucket.Name,
-              estimatedSavings: 1000, // $10/month average
+              estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
               reason: `Bucket ${bucket.Name} has versioning enabled without lifecycle management`,
             });
           }
@@ -329,7 +329,7 @@ export class AwsService {
                 name: 'S3 buckets should have lifecycle policies to optimize costs',
                 passed: false,
                 resourceId: bucket.Name,
-                estimatedSavings: 500, // $5/month average
+                estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
                 reason: `Bucket ${bucket.Name} does not have lifecycle policies configured`,
               });
             }
@@ -427,7 +427,7 @@ export class AwsService {
             name: 'ElastiCache clusters should use current generation node types',
             passed: false,
             resourceId: cluster.CacheClusterId,
-            estimatedSavings: 2000, // $20/month average
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `Cluster ${cluster.CacheClusterId} uses old generation node type ${cluster.CacheNodeType}`,
           });
         }
@@ -469,7 +469,7 @@ export class AwsService {
             name: 'Redshift clusters should not be paused for extended periods',
             passed: false,
             resourceId: cluster.ClusterIdentifier,
-            estimatedSavings: 10000, // $100/month average
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `Cluster ${cluster.ClusterIdentifier} is paused`,
           });
         }
@@ -481,7 +481,7 @@ export class AwsService {
             name: 'Redshift clusters should use current generation node types',
             passed: false,
             resourceId: cluster.ClusterIdentifier,
-            estimatedSavings: 5000, // $50/month average
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `Cluster ${cluster.ClusterIdentifier} uses old generation node type ${cluster.NodeType}`,
           });
         }
@@ -523,7 +523,7 @@ export class AwsService {
             name: 'Lambda functions should not be over-provisioned',
             passed: false,
             resourceId: func.FunctionName,
-            estimatedSavings: 500, // $5/month average
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `Function ${func.FunctionName} has ${func.MemorySize}MB memory which may be over-provisioned`,
           });
         }
