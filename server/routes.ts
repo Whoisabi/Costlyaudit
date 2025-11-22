@@ -12,6 +12,7 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import { AwsService } from "./aws-service";
+import { steampipeService } from "./steampipe-service";
 
 // Simple in-memory cache for cost data (to avoid excessive Cost Explorer API calls)
 interface CostCache {
@@ -208,7 +209,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/benchmarks/run", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const { benchmarkId } = req.body;
+      const { benchmarkId, useSteampipe } = req.body;
       
       // Validate benchmarkId
       const validBenchmarks = ['ec2', 'rds', 's3', 'dynamodb', 'elasticache', 'redshift', 'lambda'];
@@ -232,6 +233,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!account.accessKeyId || !account.secretAccessKey) {
         res.status(400).json({ message: "AWS credentials are missing or invalid" });
         return;
+      }
+      
+      // Use Steampipe if requested (for accurate savings calculation)
+      if (useSteampipe) {
+        try {
+          const steampipeResult = await steampipeService.runBenchmark(
+            `aws_thrifty.benchmark.${benchmarkId}`,
+            account.accessKeyId,
+            account.secretAccessKey,
+            account.region
+          );
+
+          // Convert Steampipe result to our format
+          const checks = steampipeResult.controls.map(control => ({
+            id: control.name,
+            name: control.name,
+            passed: control.status === 'ok',
+            resourceId: control.resource,
+            estimatedSavings: 0, // TODO: Calculate based on resource cost
+            reason: control.reason,
+          }));
+
+          const controlsPassed = steampipeResult.summary.status.ok;
+          const controlsFailed = 
+            steampipeResult.summary.status.alarm + 
+            steampipeResult.summary.status.error;
+
+          // Save the benchmark result
+          await storage.saveBenchmarkResult({
+            awsAccountId: account.id,
+            benchmarkId: benchmarkId,
+            benchmarkName: steampipeResult.title,
+            controlsPassed,
+            controlsFailed,
+            estimatedSavings: 0, // TODO: Calculate total savings
+            resultJson: { 
+              steampipe: true,
+              checks,
+              rawResult: steampipeResult 
+            },
+          }, checks);
+
+          res.json({ 
+            success: true, 
+            result: {
+              benchmarkId,
+              benchmarkName: steampipeResult.title,
+              checks,
+              controlsPassed,
+              controlsFailed,
+              estimatedSavings: 0,
+            }
+          });
+          return;
+        } catch (steampipeError: any) {
+          console.error('Steampipe benchmark failed, falling back to AWS SDK:', steampipeError);
+          // Fall through to use AWS SDK if Steampipe fails
+        }
       }
       
       // Use real AWS scanning with decrypted credentials
