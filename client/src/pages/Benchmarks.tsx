@@ -5,8 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Play, CheckCircle2, XCircle, AlertTriangle, ChevronRight, Zap, Target } from "lucide-react";
+import { Play, CheckCircle2, XCircle, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
@@ -113,7 +111,6 @@ export default function Benchmarks() {
   const { toast } = useToast();
   const [selectedBenchmarkId, setSelectedBenchmarkId] = useState<string | null>(null);
   const [showResourcesDialog, setShowResourcesDialog] = useState(false);
-  const [useSteampipe, setUseSteampipe] = useState(false); // Toggle for accurate mode
 
   const { data: apiResults, isLoading } = useQuery<Array<{
     id: string;
@@ -155,7 +152,7 @@ export default function Benchmarks() {
 
   const runBenchmarkMutation = useMutation({
     mutationFn: async (benchmarkId: string) => {
-      await apiRequest("POST", "/api/benchmarks/run", { benchmarkId, useSteampipe });
+      await apiRequest("POST", "/api/benchmarks/run", { benchmarkId, useSteampipe: true });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/benchmarks/results"] });
@@ -204,73 +201,12 @@ export default function Benchmarks() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-3xl font-semibold">Benchmarks</h1>
-          <p className="text-sm text-muted-foreground mt-2">
-            Run cost optimization benchmarks across your AWS services
-          </p>
-        </div>
-        
-        {/* Steampipe Mode Toggle */}
-        <Card className="min-w-[320px]">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                {useSteampipe ? (
-                  <Target className="h-5 w-5 text-primary" />
-                ) : (
-                  <Zap className="h-5 w-5 text-muted-foreground" />
-                )}
-                <div className="space-y-0.5">
-                  <Label htmlFor="steampipe-mode" className="text-sm font-medium cursor-pointer">
-                    {useSteampipe ? "Accurate Mode" : "Fast Mode"}
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    {useSteampipe 
-                      ? "Uses Steampipe + Cost Explorer for precise savings"
-                      : "Quick scan without exact cost calculations"}
-                  </p>
-                </div>
-              </div>
-              <Switch
-                id="steampipe-mode"
-                checked={useSteampipe}
-                onCheckedChange={setUseSteampipe}
-                data-testid="switch-steampipe-mode"
-              />
-            </div>
-          </CardContent>
-        </Card>
+      <div>
+        <h1 className="text-3xl font-semibold">Benchmarks</h1>
+        <p className="text-sm text-muted-foreground mt-2">
+          Run cost optimization benchmarks using Steampipe + Cost Explorer for accurate savings calculations based on your actual AWS billing data
+        </p>
       </div>
-
-      {!useSteampipe && (
-        <Card className="border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500" />
-              Fast Mode: Savings Not Calculated
-            </CardTitle>
-            <CardDescription>
-              Enable Accurate Mode above to get real savings calculations from your AWS billing data via Steampipe + Cost Explorer integration.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      )}
-
-      {useSteampipe && (
-        <Card className="border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/20">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Target className="h-4 w-4 text-blue-600 dark:text-blue-500" />
-              Accurate Mode Enabled
-            </CardTitle>
-            <CardDescription>
-              Benchmarks will use Steampipe to analyze your infrastructure and Cost Explorer API to calculate exact savings from your actual AWS billing data. This may take 30-60 seconds per benchmark.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      )}
 
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
