@@ -15,6 +15,109 @@ import { AwsService } from "./aws-service";
 import { steampipeService } from "./steampipe-service";
 import { PricingService } from "./pricing-service";
 
+/**
+ * Parse AWS ARN to extract resource ID for Cost Explorer queries
+ * Cost Explorer expects just the resource ID (not the full ARN or namespace prefix)
+ * 
+ * Examples:
+ * Slash-delimited (EC2, ELB, etc.):
+ *   - arn:aws:ec2:region:account:instance/i-123 → i-123
+ *   - arn:aws:ec2:region:account:snapshot/snap-123 → snap-123
+ *   - arn:aws:elasticloadbalancing:region:account:loadbalancer/app/my-lb/123 → app/my-lb/123
+ * 
+ * Colon-delimited (RDS, Lambda, etc.):
+ *   - arn:aws:rds:region:account:db:mydb → mydb
+ *   - arn:aws:lambda:region:account:function:myfunc → myfunc
+ *   - arn:aws:rds:region:account:snapshot:rds:mydb-snap → rds:mydb-snap
+ */
+function parseResourceIdFromArn(arn: string): string {
+  // If not an ARN, return as-is (might already be a resource ID)
+  if (!arn.startsWith('arn:')) {
+    return arn;
+  }
+
+  // Parse ARN: arn:aws:service:region:account:resource
+  const parts = arn.split(':');
+  if (parts.length < 6) {
+    return arn; // Invalid ARN, return as-is
+  }
+
+  // The resource part is everything after the 5th colon
+  const resourcePart = parts.slice(5).join(':');
+
+  // For slash-delimited resources (EC2, EBS, ELB, DynamoDB, etc.)
+  // Format: resource-type/resource-id or resource-type/segment1/segment2/...
+  // Examples:
+  //   - instance/i-123 → i-123
+  //   - snapshot/snap-123 → snap-123  
+  //   - loadbalancer/app/my-lb/123 → app/my-lb/123 (multi-segment)
+  if (resourcePart.includes('/')) {
+    const firstSlashIndex = resourcePart.indexOf('/');
+    // Return everything after the first slash (preserves multi-segment IDs)
+    return resourcePart.substring(firstSlashIndex + 1);
+  }
+  
+  // For colon-delimited resources (RDS, Lambda, etc.)
+  // Format: resource-type:resource-id
+  // Examples:
+  //   - db:mydb → mydb
+  //   - function:myfunc → myfunc
+  //   - snapshot:rds:mydb-snapshot → rds:mydb-snapshot (multi-colon, keep rest)
+  if (resourcePart.includes(':')) {
+    const firstColonIndex = resourcePart.indexOf(':');
+    // Return everything after the first colon (preserves multi-colon IDs)
+    return resourcePart.substring(firstColonIndex + 1);
+  }
+  
+  // For resources without delimiters, return as-is
+  return resourcePart;
+}
+
+/**
+ * Determine Cost Explorer service name from ARN
+ * Maps AWS resource ARNs to official Cost Explorer SERVICE dimension values
+ */
+function getCostExplorerServiceFromArn(arn: string): string | null {
+  if (!arn.startsWith('arn:')) {
+    return null; // Not an ARN, can't determine service
+  }
+
+  // Parse ARN: arn:aws:service:region:account:resource-type/resource-id
+  const parts = arn.split(':');
+  if (parts.length < 6) {
+    return null;
+  }
+
+  const service = parts[2]; // e.g., "ec2", "rds", "s3"
+  const resourcePart = parts.slice(5).join(':'); // Everything after account ID
+
+  // For EC2 service, determine if it's compute or other based on resource type
+  if (service === 'ec2') {
+    if (resourcePart.startsWith('instance/')) {
+      return 'Amazon Elastic Compute Cloud - Compute';
+    } else if (resourcePart.startsWith('volume/') || resourcePart.startsWith('snapshot/')) {
+      return 'EC2 - Other'; // EBS volumes and snapshots
+    } else if (resourcePart.startsWith('elastic-ip/') || resourcePart.startsWith('address/')) {
+      return 'EC2 - Other'; // Elastic IPs
+    } else {
+      return 'Amazon Elastic Compute Cloud - Compute'; // Default to compute
+    }
+  }
+
+  // Service name mappings
+  const serviceMap: Record<string, string> = {
+    'rds': 'Amazon Relational Database Service',
+    'elasticache': 'Amazon ElastiCache',
+    'redshift': 'Amazon Redshift',
+    'lambda': 'AWS Lambda',
+    'elasticloadbalancing': 'Amazon Elastic Load Balancing',
+    's3': null, // Not supported for resource-level queries
+    'dynamodb': null, // Not supported for resource-level queries
+  };
+
+  return serviceMap[service] || null;
+}
+
 // Simple in-memory cache for cost data (to avoid excessive Cost Explorer API calls)
 interface CostCache {
   data: CostSummary;
@@ -260,15 +363,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
               if (control.status !== 'ok') {
                 try {
-                  // Extract resource ID and type from ARN
-                  const resourceId = control.resource.split('/').pop() || control.resource;
-                  const resourceType = control.resource.split(':')[2]?.toUpperCase() || 'Unknown';
-
-                  estimatedSavings = await pricingService.calculateSavingsForControl(
-                    control.name,
-                    resourceId,
-                    resourceType
-                  );
+                  // Extract resource ID from ARN
+                  const resourceId = parseResourceIdFromArn(control.resource);
+                  
+                  // Determine Cost Explorer service name from ARN
+                  const serviceCode = getCostExplorerServiceFromArn(control.resource);
+                  
+                  // Skip if service not supported for resource-level queries
+                  if (!serviceCode) {
+                    console.warn(`Cost Explorer resource-level data not available for ${control.resource}`);
+                    estimatedSavings = 0;
+                  } else {
+                    estimatedSavings = await pricingService.calculateSavingsForControlWithService(
+                      control.name,
+                      resourceId,
+                      serviceCode
+                    );
+                  }
                 } catch (error) {
                   console.error(`Error calculating savings for ${control.name}:`, error);
                 }

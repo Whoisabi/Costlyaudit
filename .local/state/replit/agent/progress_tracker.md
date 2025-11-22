@@ -69,18 +69,40 @@
       - Parses JSON output from Steampipe
       - Supports all 7 service benchmarks (EC2, RDS, S3, DynamoDB, ElastiCache, Redshift, Lambda)
       - Extracts resource IDs and types from ARNs
-    - ✓ Created PricingService module (server/pricing-service.ts):
-      - Calculates AWS resource costs using pricing estimates
-      - Supports EC2 (40+ instance types), RDS, EBS, S3, DynamoDB
-      - Calculates potential savings based on optimization type (stopped, idle, rightsizing)
-      - Methods for stopped instances, idle resources, unattached volumes, old snapshots
+    - ✓ Refactored PricingService module (server/pricing-service.ts):
+      - Removed all hardcoded pricing estimates
+      - Now uses AwsService.getResourceCost() for actual billing data
+      - Supports official Cost Explorer service names for all AWS services
+      - Calculates savings based on optimization type (100% for stopped, 60% for idle, 30% for upgrades)
+      - Skips S3/DynamoDB (GetCostAndUsageWithResources doesn't support these)
+    - ✓ Extended AwsService with getResourceCost() method:
+      - Queries Cost Explorer GetCostAndUsageWithResources API
+      - Returns actual daily cost for specific resources (last 7-14 days)
+      - Limited to 14-day window (AWS API constraint)
+      - Returns null if no data available
+    - ✓ Added ARN parsing helper (parseResourceIdFromArn):
+      - Handles different ARN formats (EC2, RDS, S3, EBS, etc.)
+      - Extracts resource IDs for Cost Explorer queries
     - ✓ Updated backend routes (/api/benchmarks/run):
       - Added `useSteampipe` parameter to enable Steampipe mode
-      - Integrates SteampipeService + PricingService for accurate savings
-      - Calculates savings per control/resource
+      - Integrates SteampipeService + PricingService + Cost Explorer
+      - Calculates actual savings per control/resource using real billing data
       - Falls back to AWS SDK if Steampipe fails
       - Returns total estimated savings in cents
+    - ✓ Updated frontend Benchmarks page:
+      - Added toggle for "Accurate Mode" (Steampipe + Cost Explorer) vs "Fast Mode" (AWS SDK)
+      - Different loading messages ("Analyzing..." vs "Running...")
+      - Info cards explaining each mode
+      - Pass useSteampipe parameter to backend API
+    - ✓ Fixed service code mappings (critical bug fixes):
+      - EC2 instances: "Amazon Elastic Compute Cloud - Compute"
+      - EBS volumes/snapshots/IPs: "EC2 - Other"
+      - Load Balancers: "Amazon Elastic Load Balancing"
+      - RDS: "Amazon Relational Database Service"
+      - ElastiCache: "Amazon ElastiCache"
+      - Redshift: "Amazon Redshift"
+      - Lambda: "AWS Lambda"
     - ✓ Application compiles and runs successfully
-    - 📝 Next: Update frontend to enable Steampipe mode via toggle/setting
-    - 📝 Next: Test with real AWS credentials to verify accuracy
-    - 📝 Next: Add caching to avoid excessive Steampipe CLI calls
+    - 📝 Next: Test with real AWS credentials to verify accurate savings calculations
+    - 📝 Next: Add caching to avoid excessive Cost Explorer API calls ($0.01 per request)
+    - 📝 Next: Add fallback estimation for S3/DynamoDB where resource-level data unavailable

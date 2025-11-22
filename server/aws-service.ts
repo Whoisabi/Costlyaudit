@@ -36,6 +36,7 @@ import {
 import {
   CostExplorerClient,
   GetCostAndUsageCommand,
+  GetCostAndUsageWithResourcesCommand,
   GetReservationPurchaseRecommendationCommand,
   GetSavingsPlansPurchaseRecommendationCommand,
   GetRightsizingRecommendationCommand,
@@ -938,6 +939,76 @@ export class AwsService {
     } catch (error: any) {
       console.error('Error fetching service resource costs:', error);
       throw new Error(`Failed to fetch resource costs for ${serviceCode}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get actual cost for a specific resource over the last N days
+   * Uses Cost Explorer GetCostAndUsageWithResources API (limited to last 14 days)
+   * 
+   * @param resourceId - AWS resource ID (e.g., i-1234567890abcdef0, vol-abc123, bucket-name)
+   * @param serviceCode - AWS service (e.g., AmazonEC2, AmazonRDS, AmazonS3)
+   * @param days - Number of days to query (max 14, default 7)
+   * @returns Daily cost in cents, or null if not available
+   */
+  async getResourceCost(
+    resourceId: string, 
+    serviceCode: string = 'AmazonEC2',
+    days: number = 7
+  ): Promise<number | null> {
+    try {
+      // Calculate date range (must be within last 14 days)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - Math.min(days, 14));
+
+      const response = await this.costExplorerClient.send(
+        new GetCostAndUsageWithResourcesCommand({
+          TimePeriod: {
+            Start: startDate.toISOString().split('T')[0],
+            End: endDate.toISOString().split('T')[0],
+          },
+          Granularity: 'DAILY',
+          Filter: {
+            And: [
+              {
+                Dimensions: {
+                  Key: 'RESOURCE_ID',
+                  Values: [resourceId],
+                }
+              },
+              {
+                Dimensions: {
+                  Key: 'SERVICE',
+                  Values: [serviceCode],
+                }
+              }
+            ]
+          },
+          Metrics: ['UnblendedCost'],
+        })
+      );
+
+      // Sum up the costs across all days
+      let totalCost = 0;
+      let daysWithData = 0;
+
+      for (const result of response.ResultsByTime || []) {
+        const amount = parseFloat(result.Total?.UnblendedCost?.Amount || '0');
+        if (amount > 0) {
+          totalCost += amount;
+          daysWithData++;
+        }
+      }
+
+      // Return average daily cost in cents, or null if no data
+      if (daysWithData === 0) return null;
+      return Math.round((totalCost / daysWithData) * 100);
+
+    } catch (error: any) {
+      console.error(`Error fetching resource cost for ${resourceId}:`, error);
+      // Return null instead of throwing to allow graceful fallback
+      return null;
     }
   }
 
