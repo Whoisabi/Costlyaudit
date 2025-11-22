@@ -13,6 +13,7 @@ import {
 import { z } from "zod";
 import { AwsService } from "./aws-service";
 import { steampipeService } from "./steampipe-service";
+import { PricingService } from "./pricing-service";
 
 // Simple in-memory cache for cost data (to avoid excessive Cost Explorer API calls)
 interface CostCache {
@@ -245,20 +246,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
             account.region
           );
 
-          // Convert Steampipe result to our format
-          const checks = steampipeResult.controls.map(control => ({
-            id: control.name,
-            name: control.name,
-            passed: control.status === 'ok',
-            resourceId: control.resource,
-            estimatedSavings: 0, // TODO: Calculate based on resource cost
-            reason: control.reason,
-          }));
+          // Create pricing service to calculate savings
+          const pricingService = new PricingService({
+            accessKeyId: account.accessKeyId,
+            secretAccessKey: account.secretAccessKey,
+            region: account.region,
+          });
+
+          // Calculate savings for each control
+          const checksWithSavings = await Promise.all(
+            steampipeResult.controls.map(async (control) => {
+              let estimatedSavings = 0;
+
+              if (control.status !== 'ok') {
+                try {
+                  // Extract resource ID and type from ARN
+                  const resourceId = control.resource.split('/').pop() || control.resource;
+                  const resourceType = control.resource.split(':')[2]?.toUpperCase() || 'Unknown';
+
+                  estimatedSavings = await pricingService.calculateSavingsForControl(
+                    control.name,
+                    resourceId,
+                    resourceType
+                  );
+                } catch (error) {
+                  console.error(`Error calculating savings for ${control.name}:`, error);
+                }
+              }
+
+              return {
+                id: control.name,
+                name: control.name,
+                passed: control.status === 'ok',
+                resourceId: control.resource,
+                estimatedSavings,
+                reason: control.reason,
+              };
+            })
+          );
 
           const controlsPassed = steampipeResult.summary.status.ok;
           const controlsFailed = 
             steampipeResult.summary.status.alarm + 
             steampipeResult.summary.status.error;
+
+          // Calculate total savings
+          const totalSavings = checksWithSavings.reduce(
+            (sum, check) => sum + check.estimatedSavings,
+            0
+          );
 
           // Save the benchmark result
           await storage.saveBenchmarkResult({
@@ -267,23 +303,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
             benchmarkName: steampipeResult.title,
             controlsPassed,
             controlsFailed,
-            estimatedSavings: 0, // TODO: Calculate total savings
+            estimatedSavings: totalSavings,
             resultJson: { 
               steampipe: true,
-              checks,
+              checks: checksWithSavings,
               rawResult: steampipeResult 
             },
-          }, checks);
+          }, checksWithSavings);
 
           res.json({ 
             success: true, 
             result: {
               benchmarkId,
               benchmarkName: steampipeResult.title,
-              checks,
+              checks: checksWithSavings,
               controlsPassed,
               controlsFailed,
-              estimatedSavings: 0,
+              estimatedSavings: totalSavings,
             }
           });
           return;

@@ -199,8 +199,76 @@ export class SteampipeService {
     return results;
   }
 
-  calculateSavingsFromControls(controls: SteampipeControl[]): number {
-    return 0;
+  async calculateSavingsFromControls(
+    controls: SteampipeControl[],
+    pricingService: any
+  ): Promise<number> {
+    let totalSavings = 0;
+
+    for (const control of controls) {
+      if (control.status === 'ok') {
+        continue; // No savings for passing controls
+      }
+
+      try {
+        // Extract resource ID from the control resource field
+        // Format is typically "arn:aws:service:region:account:resource/id"
+        const resourceId = this.extractResourceId(control.resource);
+        const resourceType = this.extractResourceType(control.resource);
+
+        // Calculate savings based on control type
+        const savings = await pricingService.calculateSavingsForControl(
+          control.name,
+          resourceId,
+          resourceType
+        );
+
+        totalSavings += savings;
+      } catch (error) {
+        console.error(`Error calculating savings for control ${control.name}:`, error);
+        // Continue with other controls
+      }
+    }
+
+    return totalSavings;
+  }
+
+  private extractResourceId(resourceArn: string): string {
+    if (!resourceArn) return '';
+    
+    // Try to extract ID from ARN format
+    const arnParts = resourceArn.split('/');
+    if (arnParts.length > 1) {
+      return arnParts[arnParts.length - 1];
+    }
+    
+    // If not an ARN, return the whole string
+    return resourceArn;
+  }
+
+  private extractResourceType(resourceArn: string): string {
+    if (!resourceArn) return 'Unknown';
+    
+    // Extract service from ARN: arn:aws:SERVICE:region:account:resource
+    const arnParts = resourceArn.split(':');
+    if (arnParts.length >= 3 && arnParts[0] === 'arn') {
+      const service = arnParts[2];
+      
+      // Map AWS service names to our resource types
+      const serviceMap: Record<string, string> = {
+        'ec2': 'EC2',
+        'rds': 'RDS',
+        's3': 'S3',
+        'dynamodb': 'DynamoDB',
+        'elasticache': 'ElastiCache',
+        'redshift': 'Redshift',
+        'lambda': 'Lambda',
+      };
+      
+      return serviceMap[service] || service.toUpperCase();
+    }
+    
+    return 'Unknown';
   }
 }
 

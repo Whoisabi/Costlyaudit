@@ -59,3 +59,28 @@
     - ✓ Dashboard continues to show accurate Cost Explorer data (real AWS billing)
     - ✓ No more misleading data - users won't see fake savings numbers anymore
     - 📝 Future work: Integrate Steampipe/Powerpipe for accurate benchmark savings calculations
+
+[x] 10. Steampipe/Powerpipe Integration for Accurate Benchmark Savings (November 22, 2025):
+    - ✓ Installed Steampipe v2.3.2 and Powerpipe v1.4.2 CLI tools in .local/bin
+    - ✓ Installed AWS plugin for Steampipe (v1.28.0)
+    - ✓ Installed AWS Thrifty mod with 55 pre-built cost optimization benchmarks
+    - ✓ Created SteampipeService module (server/steampipe-service.ts):
+      - Runs Powerpipe benchmarks via child_process
+      - Parses JSON output from Steampipe
+      - Supports all 7 service benchmarks (EC2, RDS, S3, DynamoDB, ElastiCache, Redshift, Lambda)
+      - Extracts resource IDs and types from ARNs
+    - ✓ Created PricingService module (server/pricing-service.ts):
+      - Calculates AWS resource costs using pricing estimates
+      - Supports EC2 (40+ instance types), RDS, EBS, S3, DynamoDB
+      - Calculates potential savings based on optimization type (stopped, idle, rightsizing)
+      - Methods for stopped instances, idle resources, unattached volumes, old snapshots
+    - ✓ Updated backend routes (/api/benchmarks/run):
+      - Added `useSteampipe` parameter to enable Steampipe mode
+      - Integrates SteampipeService + PricingService for accurate savings
+      - Calculates savings per control/resource
+      - Falls back to AWS SDK if Steampipe fails
+      - Returns total estimated savings in cents
+    - ✓ Application compiles and runs successfully
+    - 📝 Next: Update frontend to enable Steampipe mode via toggle/setting
+    - 📝 Next: Test with real AWS credentials to verify accuracy
+    - 📝 Next: Add caching to avoid excessive Steampipe CLI calls
