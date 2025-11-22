@@ -16,3 +16,15 @@
     - ✓ Workflow "Start application" running successfully on port 5000
     - ✓ Frontend verified and rendering correctly
     - ✓ Project fully migrated and ready for development
+
+[x] 7. AWS Cost Explorer Integration (November 22, 2025):
+    - ✓ Integrated AWS Cost Explorer API with real-time cost data fetching
+    - ✓ Implemented current vs previous month cost comparison
+    - ✓ Added credit filtering toggle (view costs with/without AWS credits)
+    - ✓ Created account-scoped caching with 6-hour TTL to minimize API costs
+    - ✓ Built CostSummary React component with trend indicators
+    - ✓ Added shared Zod schemas for type safety across frontend/backend
+    - ✓ Implemented cache invalidation on account create/delete
+    - ✓ Displays top 5 services by cost
+    - ✓ All monetary amounts consistently handled in cents
+    - ✓ Validated by architect - ready for production
