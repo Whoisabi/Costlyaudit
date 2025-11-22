@@ -105,7 +105,7 @@ function getCostExplorerServiceFromArn(arn: string): string | null {
   }
 
   // Service name mappings
-  const serviceMap: Record<string, string> = {
+  const serviceMap: Record<string, string | null> = {
     'rds': 'Amazon Relational Database Service',
     'elasticache': 'Amazon ElastiCache',
     'redshift': 'Amazon Redshift',
