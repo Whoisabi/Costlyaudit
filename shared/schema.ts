@@ -126,3 +126,93 @@ export const costSummarySchema = z.object({
 export type MonthlyCost = z.infer<typeof monthlyCostSchema>;
 export type ServiceCost = z.infer<typeof serviceCostSchema>;
 export type CostSummary = z.infer<typeof costSummarySchema>;
+
+// Extended service breakdown with full details
+export const serviceBreakdownSchema = z.object({
+  serviceCode: z.string(), // e.g., "AmazonEC2"
+  serviceName: z.string(), // e.g., "Amazon Elastic Compute Cloud"
+  amount: z.number(), // in cents
+  region: z.string().optional(), // Primary region (if applicable)
+  resourceCount: z.number().optional(), // Number of resources
+});
+
+export type ServiceBreakdown = z.infer<typeof serviceBreakdownSchema>;
+
+// Resource cost details for drill-down
+export const resourceCostDetailSchema = z.object({
+  resourceId: z.string(), // AWS resource ID (e.g., i-1234567890abcdef0)
+  resourceName: z.string().optional(), // Name tag or identifier
+  resourceType: z.string(), // e.g., "EC2 Instance", "RDS Database"
+  region: z.string(), // AWS region
+  usageType: z.string(), // e.g., "BoxUsage:t2.micro"
+  amount: z.number(), // in cents
+  tags: z.record(z.string()).optional(), // Resource tags
+});
+
+export type ResourceCostDetail = z.infer<typeof resourceCostDetailSchema>;
+
+// Service resources response (grouped by region)
+export const serviceResourcesSchema = z.object({
+  serviceCode: z.string(),
+  serviceName: z.string(),
+  totalAmount: z.number(), // in cents
+  byRegion: z.array(z.object({
+    region: z.string(),
+    amount: z.number(), // in cents
+    resources: z.array(resourceCostDetailSchema),
+  })),
+});
+
+export type ServiceResources = z.infer<typeof serviceResourcesSchema>;
+
+// AWS Recommendations types
+export const reservedInstanceRecommendationSchema = z.object({
+  serviceCode: z.string(), // e.g., "AmazonEC2"
+  instanceType: z.string(), // e.g., "t3.medium"
+  region: z.string(),
+  paymentOption: z.string(), // e.g., "NO_UPFRONT", "PARTIAL_UPFRONT", "ALL_UPFRONT"
+  term: z.string(), // e.g., "ONE_YEAR", "THREE_YEARS"
+  estimatedMonthlySavings: z.number(), // in cents
+  estimatedSavingsPercentage: z.number(),
+  upfrontCost: z.number(), // in cents
+  recommendedQuantity: z.number(),
+});
+
+export type ReservedInstanceRecommendation = z.infer<typeof reservedInstanceRecommendationSchema>;
+
+export const savingsPlanRecommendationSchema = z.object({
+  planType: z.string(), // "COMPUTE_SP" or "EC2_INSTANCE_SP"
+  paymentOption: z.string(),
+  term: z.string(),
+  hourlyCommitment: z.number(), // in cents per hour
+  estimatedMonthlySavings: z.number(), // in cents
+  estimatedSavingsPercentage: z.number(),
+  upfrontCost: z.number(), // in cents
+});
+
+export type SavingsPlanRecommendation = z.infer<typeof savingsPlanRecommendationSchema>;
+
+export const rightsizingRecommendationSchema = z.object({
+  resourceId: z.string(),
+  resourceName: z.string().optional(),
+  currentInstanceType: z.string(),
+  recommendedInstanceType: z.string(),
+  region: z.string(),
+  estimatedMonthlySavings: z.number(), // in cents
+  estimatedSavingsPercentage: z.number(),
+  reason: z.string(), // Explanation for the recommendation
+  cpuUtilization: z.number().optional(), // Average CPU utilization percentage
+  memoryUtilization: z.number().optional(),
+});
+
+export type RightsizingRecommendation = z.infer<typeof rightsizingRecommendationSchema>;
+
+// Combined recommendations response
+export const costRecommendationsSchema = z.object({
+  reservedInstances: z.array(reservedInstanceRecommendationSchema),
+  savingsPlans: z.array(savingsPlanRecommendationSchema),
+  rightsizing: z.array(rightsizingRecommendationSchema),
+  totalEstimatedMonthlySavings: z.number(), // in cents
+});
+
+export type CostRecommendations = z.infer<typeof costRecommendationsSchema>;
