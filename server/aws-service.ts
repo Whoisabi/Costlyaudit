@@ -148,7 +148,7 @@ export class AwsService {
             name: 'EBS volumes should be attached to instances',
             passed: false,
             resourceId: volume.VolumeId,
-            estimatedSavings: (volume.Size || 0) * 10, // $0.10/GB/month
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `Volume ${volume.VolumeId} (${volume.Size}GB) is unattached and incurring costs`,
           });
         }
@@ -167,7 +167,7 @@ export class AwsService {
             name: 'EBS snapshots should not be older than 90 days',
             passed: false,
             resourceId: snapshot.SnapshotId,
-            estimatedSavings: (snapshot.VolumeSize || 0) * 5, // $0.05/GB/month
+            estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
             reason: `Snapshot ${snapshot.SnapshotId} is older than 90 days`,
           });
         }
@@ -384,7 +384,7 @@ export class AwsService {
               name: 'DynamoDB tables should use on-demand billing for variable workloads',
               passed: false,
               resourceId: tableName,
-              estimatedSavings: (readCapacity + writeCapacity) * 10, // Rough estimate
+              estimatedSavings: 0, // Requires Steampipe integration for accurate calculation
               reason: `Table ${tableName} uses provisioned capacity (${readCapacity} RCU, ${writeCapacity} WCU)`,
             });
           }
