@@ -33,6 +33,11 @@ import {
   LambdaClient, 
   ListFunctionsCommand 
 } from "@aws-sdk/client-lambda";
+import {
+  CostExplorerClient,
+  GetCostAndUsageCommand,
+} from "@aws-sdk/client-cost-explorer";
+import type { CostSummary, MonthlyCost, ServiceCost } from "@shared/schema";
 
 export interface AwsCredentials {
   accessKeyId: string;
@@ -70,6 +75,7 @@ export class AwsService {
   private elasticacheClient: ElastiCacheClient;
   private redshiftClient: RedshiftClient;
   private lambdaClient: LambdaClient;
+  private costExplorerClient: CostExplorerClient;
 
   constructor(credentials: AwsCredentials) {
     const config = {
@@ -87,6 +93,14 @@ export class AwsService {
     this.elasticacheClient = new ElastiCacheClient(config);
     this.redshiftClient = new RedshiftClient(config);
     this.lambdaClient = new LambdaClient(config);
+    // Cost Explorer must use us-east-1 region
+    this.costExplorerClient = new CostExplorerClient({
+      region: 'us-east-1',
+      credentials: {
+        accessKeyId: credentials.accessKeyId,
+        secretAccessKey: credentials.secretAccessKey,
+      },
+    });
   }
 
   /**
@@ -629,5 +643,122 @@ export class AwsService {
     }
 
     return activeServices;
+  }
+
+  /**
+   * Get cost summary for current and previous month with optional credit exclusion
+   * @param includeCredits - If false, excludes AWS credits and refunds from cost calculation
+   */
+  async getCostSummary(includeCredits: boolean = true): Promise<CostSummary> {
+    const today = new Date();
+    
+    // Calculate date ranges
+    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const previousMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    
+    // Format dates as YYYY-MM-DD
+    const formatDate = (date: Date) => date.toISOString().split('T')[0];
+    
+    // Build filter to exclude credits/refunds if needed
+    const filter = includeCredits ? undefined : {
+      Not: {
+        Dimensions: {
+          Key: 'RECORD_TYPE' as const,
+          Values: ['Credit', 'Refund', 'Tax']
+        }
+      }
+    } as any;
+
+    try {
+      // Get current and previous month costs in one call
+      const costResponse = await this.costExplorerClient.send(
+        new GetCostAndUsageCommand({
+          TimePeriod: {
+            Start: formatDate(previousMonthStart),
+            End: formatDate(nextMonthStart),
+          },
+          Granularity: 'MONTHLY',
+          Metrics: ['AmortizedCost'],
+          Filter: filter,
+        })
+      );
+
+      // Get costs by service for current month
+      const serviceCostResponse = await this.costExplorerClient.send(
+        new GetCostAndUsageCommand({
+          TimePeriod: {
+            Start: formatDate(currentMonthStart),
+            End: formatDate(nextMonthStart),
+          },
+          Granularity: 'MONTHLY',
+          Metrics: ['AmortizedCost'],
+          GroupBy: [
+            {
+              Type: 'DIMENSION',
+              Key: 'SERVICE',
+            },
+          ],
+          Filter: filter,
+        })
+      );
+
+      // Extract cost data
+      const results = costResponse.ResultsByTime || [];
+      const previousMonthData = results[0];
+      const currentMonthData = results[1];
+
+      const previousAmount = parseFloat(previousMonthData?.Total?.AmortizedCost?.Amount || '0');
+      const currentAmount = parseFloat(currentMonthData?.Total?.AmortizedCost?.Amount || '0');
+
+      // Calculate percentage change
+      const costDifference = currentAmount - previousAmount;
+      const percentageChange = previousAmount > 0 
+        ? ((costDifference / previousAmount) * 100) 
+        : 0;
+
+      // Extract top 5 services by cost
+      const serviceGroups = serviceCostResponse.ResultsByTime?.[0]?.Groups || [];
+      const topServices: ServiceCost[] = serviceGroups
+        .map(group => ({
+          service: group.Keys?.[0] || 'Unknown',
+          amount: parseFloat(group.Metrics?.AmortizedCost?.Amount || '0'),
+        }))
+        .filter(service => service.amount > 0.01) // Filter out negligible costs
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 5);
+
+      return {
+        currentMonth: {
+          amount: Math.round(currentAmount * 100), // Convert to cents
+          startDate: formatDate(currentMonthStart),
+          endDate: formatDate(today),
+        },
+        previousMonth: {
+          amount: Math.round(previousAmount * 100), // Convert to cents
+          startDate: formatDate(previousMonthStart),
+          endDate: formatDate(currentMonthStart),
+        },
+        percentageChange: Math.round(percentageChange * 100) / 100, // Round to 2 decimals
+        costDifference: Math.round(costDifference * 100), // Convert to cents
+        topServices: topServices.map(s => ({
+          service: s.service,
+          amount: Math.round(s.amount * 100), // Convert to cents
+        })),
+      };
+    } catch (error: any) {
+      console.error('Error fetching cost data from AWS Cost Explorer:', error);
+      
+      // Provide helpful error messages
+      if (error.name === 'AccessDeniedException') {
+        throw new Error('AWS credentials do not have permission to access Cost Explorer. Please ensure your IAM user has ce:GetCostAndUsage permission.');
+      }
+      
+      if (error.name === 'DataUnavailableException') {
+        throw new Error('Cost Explorer data is not available yet. It may take 24 hours for data to appear after enabling Cost Explorer.');
+      }
+      
+      throw new Error(`Failed to fetch cost data: ${error.message}`);
+    }
   }
 }

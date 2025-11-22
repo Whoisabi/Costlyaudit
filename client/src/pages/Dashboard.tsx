@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DollarSign, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import CostSummary from "@/components/CostSummary";
 import {
   BarChart,
   Bar,
@@ -75,6 +76,9 @@ export default function Dashboard() {
           Overview of your AWS cost optimization opportunities
         </p>
       </div>
+
+      {/* AWS Cost Comparison */}
+      <CostSummary />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>

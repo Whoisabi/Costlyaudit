@@ -102,3 +102,27 @@ export const queryHistory = pgTable("query_history", {
 });
 
 export type QueryHistory = typeof queryHistory.$inferSelect;
+
+// AWS Cost Explorer types
+export const monthlyCostSchema = z.object({
+  amount: z.number(), // in cents
+  startDate: z.string(),
+  endDate: z.string(),
+});
+
+export const serviceCostSchema = z.object({
+  service: z.string(),
+  amount: z.number(), // in cents
+});
+
+export const costSummarySchema = z.object({
+  currentMonth: monthlyCostSchema,
+  previousMonth: monthlyCostSchema,
+  percentageChange: z.number(),
+  costDifference: z.number(), // in cents
+  topServices: z.array(serviceCostSchema),
+});
+
+export type MonthlyCost = z.infer<typeof monthlyCostSchema>;
+export type ServiceCost = z.infer<typeof serviceCostSchema>;
+export type CostSummary = z.infer<typeof costSummarySchema>;

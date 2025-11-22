@@ -2,9 +2,55 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { insertAwsAccountSchema } from "@shared/schema";
+import { insertAwsAccountSchema, costSummarySchema, type CostSummary } from "@shared/schema";
 import { z } from "zod";
 import { AwsService } from "./aws-service";
+
+// Simple in-memory cache for cost data (to avoid excessive Cost Explorer API calls)
+interface CostCache {
+  data: CostSummary;
+  timestamp: number;
+  userId: string;
+  includeCredits: boolean;
+}
+
+const costCache: Map<string, CostCache> = new Map();
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours in milliseconds
+
+function getCachedCost(userId: string, accountId: string, includeCredits: boolean): CostSummary | null {
+  const cacheKey = `${userId}-${accountId}-${includeCredits}`;
+  const cached = costCache.get(cacheKey);
+  
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+  
+  // Remove expired cache
+  if (cached) {
+    costCache.delete(cacheKey);
+  }
+  
+  return null;
+}
+
+function setCachedCost(userId: string, accountId: string, includeCredits: boolean, data: CostSummary): void {
+  const cacheKey = `${userId}-${accountId}-${includeCredits}`;
+  costCache.set(cacheKey, {
+    data,
+    timestamp: Date.now(),
+    userId,
+    includeCredits,
+  });
+}
+
+function invalidateCostCache(userId: string, accountId: string): void {
+  const keys = Array.from(costCache.keys());
+  keys.forEach(key => {
+    if (key.startsWith(`${userId}-${accountId}-`)) {
+      costCache.delete(key);
+    }
+  });
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -43,6 +89,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       const account = await storage.createAwsAccountForDisplay(accountData);
+      
+      // Invalidate cost cache when new account is added
+      invalidateCostCache(userId, account.id);
+      
       res.json(account);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -63,6 +113,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(404).json({ message: "AWS account not found or access denied" });
         return;
       }
+      
+      // Invalidate cost cache for this account
+      invalidateCostCache(userId, req.params.id);
       
       res.json({ success: true });
     } catch (error) {
@@ -295,6 +348,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ 
         services: [], 
         error: "Failed to detect active services" 
+      });
+    }
+  });
+
+  // Cost Summary route - returns current vs previous month cost comparison
+  app.get("/api/costs/summary", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const includeCredits = req.query.includeCredits !== 'false'; // Default to true
+      
+      const accounts = await storage.getAwsAccounts(userId);
+      if (accounts.length === 0) {
+        res.status(400).json({ 
+          message: "No AWS accounts connected. Please add an AWS account first." 
+        });
+        return;
+      }
+
+      const account = accounts[0];
+      
+      // Check cache first (with account ID)
+      const cachedData = getCachedCost(userId, account.id, includeCredits);
+      if (cachedData) {
+        res.json(cachedData);
+        return;
+      }
+      
+      // Validate credentials exist
+      if (!account.accessKeyId || !account.secretAccessKey) {
+        res.status(400).json({ 
+          message: "AWS credentials are missing or invalid" 
+        });
+        return;
+      }
+      
+      const awsService = new AwsService({
+        accessKeyId: account.accessKeyId,
+        secretAccessKey: account.secretAccessKey,
+        region: account.region,
+      });
+
+      const costSummary = await awsService.getCostSummary(includeCredits);
+      
+      // Validate response against schema before caching
+      const validatedCostSummary = costSummarySchema.parse(costSummary);
+      
+      // Cache the validated result (with account ID)
+      setCachedCost(userId, account.id, includeCredits, validatedCostSummary);
+      
+      res.json(validatedCostSummary);
+    } catch (error: any) {
+      console.error("Error fetching cost summary:", error);
+      
+      // Provide helpful error messages
+      if (error.name === 'AccessDeniedException' || error.message?.includes('permission')) {
+        res.status(403).json({ 
+          message: "AWS credentials do not have permission to access Cost Explorer. Please ensure your IAM user has ce:GetCostAndUsage permission." 
+        });
+        return;
+      }
+      
+      if (error.name === 'DataUnavailableException' || error.message?.includes('not available')) {
+        res.status(503).json({ 
+          message: "Cost Explorer data is not available yet. It may take 24 hours for data to appear after enabling Cost Explorer." 
+        });
+        return;
+      }
+      
+      res.status(500).json({ 
+        message: error.message || "Failed to fetch cost summary" 
       });
     }
   });
