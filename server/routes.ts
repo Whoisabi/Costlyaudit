@@ -1,10 +1,12 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth, isAuthenticated, hashPassword, verifyPassword } from "./customAuth";
 import { 
   insertAwsAccountSchema, 
   costSummarySchema, 
+  signupSchema,
+  loginSchema,
   type CostSummary,
   type ServiceBreakdown,
   type ServiceResources,
@@ -166,14 +168,87 @@ function invalidateCostCache(userId: string, accountId: string): void {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
-  await setupAuth(app);
+  setupAuth(app);
 
   // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+  app.post('/api/auth/signup', async (req, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      res.json(user);
+      const input = signupSchema.parse(req.body);
+      
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(input.email);
+      if (existingUser) {
+        return res.status(400).json({ message: "Email already registered" });
+      }
+      
+      // Hash password and create user
+      const hashedPassword = await hashPassword(input.password);
+      const user = await storage.createUser({
+        email: input.email,
+        password: hashedPassword,
+        firstName: input.firstName,
+        lastName: input.lastName,
+      });
+      
+      // Create session
+      req.session.userId = user.id;
+      
+      // Return user without password
+      const { password: _, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      console.error("Error during signup:", error);
+      res.status(500).json({ message: "Failed to create account" });
+    }
+  });
+
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const input = loginSchema.parse(req.body);
+      
+      // Find user by email
+      const user = await storage.getUserByEmail(input.email);
+      if (!user) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+      
+      // Verify password
+      const isValid = await verifyPassword(input.password, user.password);
+      if (!isValid) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+      
+      // Create session
+      req.session.userId = user.id;
+      
+      // Return user without password
+      const { password: _, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      console.error("Error during login:", error);
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ message: "Failed to logout" });
+      }
+      res.json({ message: "Logged out successfully" });
+    });
+  });
+
+  app.get('/api/auth/user', isAuthenticated, async (req, res) => {
+    try {
+      // User is already attached to req by isAuthenticated middleware
+      res.json(req.user);
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
@@ -183,7 +258,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // AWS Accounts routes
   app.get("/api/aws-accounts", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const accounts = await storage.getAwsAccountsForDisplay(userId);
       res.json(accounts);
     } catch (error) {
@@ -194,7 +269,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/aws-accounts", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const accountData = insertAwsAccountSchema.parse({
         ...req.body,
         userId,
@@ -218,7 +293,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/aws-accounts/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const deleted = await storage.deleteAwsAccount(req.params.id, userId);
       
       if (!deleted) {
@@ -239,7 +314,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Dashboard stats route
   app.get("/api/dashboard/stats", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const accounts = await storage.getAwsAccounts(userId);
       
       if (accounts.length === 0) {
@@ -294,7 +369,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Benchmarks routes
   app.get("/api/benchmarks/results", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const accounts = await storage.getAwsAccounts(userId);
       
       let allResults: any[] = [];
@@ -312,7 +387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/benchmarks/run", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const { benchmarkId, useSteampipe } = req.body;
       
       // Validate benchmarkId
@@ -522,7 +597,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get active AWS services (to show only relevant benchmarks)
   app.get("/api/benchmarks/active-services", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const accounts = await storage.getAwsAccounts(userId);
       
       if (accounts.length === 0) {
@@ -568,7 +643,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Cost Summary route - returns current vs previous month cost comparison
   app.get("/api/costs/summary", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const includeCredits = req.query.includeCredits !== 'false'; // Default to true
       
       const accounts = await storage.getAwsAccounts(userId);
@@ -638,7 +713,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // All Services Costs route - returns ALL services with costs (not just top 5)
   app.get("/api/costs/services", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const includeCredits = req.query.includeCredits !== 'false';
       
       const accounts = await storage.getAwsAccounts(userId);
@@ -689,7 +764,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Service Resources route - returns detailed resource breakdown for a specific service
   app.get("/api/costs/services/:serviceCode/resources", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const { serviceCode } = req.params;
       const includeCredits = req.query.includeCredits !== 'false';
       
@@ -741,7 +816,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Cost Recommendations route - returns RI, Savings Plans, and Rightsizing recommendations
   app.get("/api/costs/recommendations", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       
       const accounts = await storage.getAwsAccounts(userId);
       if (accounts.length === 0) {
@@ -787,7 +862,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Resources route - returns all resources with cost optimization recommendations
   app.get("/api/resources", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const accounts = await storage.getAwsAccounts(userId);
       
       let allResources: any[] = [];
@@ -822,7 +897,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SQL Query routes
   app.get("/api/queries/history", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const history = await storage.getQueryHistory(userId);
       res.json(history);
     } catch (error) {
@@ -833,7 +908,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/queries/execute", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id;
       const { query } = req.body;
       
       if (!query || typeof query !== "string") {
