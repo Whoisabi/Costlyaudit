@@ -43,3 +43,18 @@
     - ✓ Properly cached queries to avoid excessive API calls
     - ✓ All features tested and working correctly
     - ✓ Ready for multi-account enhancement (TODO added for future work)
+
+[x] 9. Data Accuracy Fix - Removed Misleading Benchmark Savings (November 22, 2025):
+    - ✓ Identified critical issue: Benchmarks showed hardcoded fake savings ($20 for S3) while Cost Explorer showed real costs ($1.26)
+    - ✓ Removed ALL hardcoded estimatedSavings values across all benchmarks:
+      - EC2 (stopped instances, elastic IPs, volumes, snapshots)
+      - RDS (stopped instances, old gen types, old snapshots)
+      - S3 (versioning, lifecycle policies)
+      - DynamoDB (provisioned capacity)
+      - ElastiCache, Redshift, Lambda
+    - ✓ Set all savings to 0 with comment: "Requires Steampipe integration for accurate calculation"
+    - ✓ Updated Benchmarks UI to show "TBD" instead of "$0.00" for all zero savings
+    - ✓ Added prominent warning card explaining savings aren't available yet
+    - ✓ Dashboard continues to show accurate Cost Explorer data (real AWS billing)
+    - ✓ No more misleading data - users won't see fake savings numbers anymore
+    - 📝 Future work: Integrate Steampipe/Powerpipe for accurate benchmark savings calculations
