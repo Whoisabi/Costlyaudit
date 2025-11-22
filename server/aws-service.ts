@@ -36,8 +36,18 @@ import {
 import {
   CostExplorerClient,
   GetCostAndUsageCommand,
+  GetReservationPurchaseRecommendationCommand,
+  GetSavingsPlansPurchaseRecommendationCommand,
+  GetRightsizingRecommendationCommand,
 } from "@aws-sdk/client-cost-explorer";
-import type { CostSummary, MonthlyCost, ServiceCost } from "@shared/schema";
+import type { 
+  CostSummary, 
+  MonthlyCost, 
+  ServiceCost,
+  ServiceBreakdown,
+  ServiceResources,
+  CostRecommendations,
+} from "@shared/schema";
 
 export interface AwsCredentials {
   accessKeyId: string;
@@ -759,6 +769,311 @@ export class AwsService {
       }
       
       throw new Error(`Failed to fetch cost data: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all services with costs (not just top 5)
+   * @param includeCredits - If false, excludes AWS credits and refunds
+   */
+  async getAllServicesCosts(includeCredits: boolean = true): Promise<ServiceBreakdown[]> {
+    const today = new Date();
+    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    
+    const formatDate = (date: Date) => date.toISOString().split('T')[0];
+    
+    const filter = includeCredits ? undefined : {
+      Not: {
+        Dimensions: {
+          Key: 'RECORD_TYPE' as const,
+          Values: ['Credit', 'Refund', 'Tax']
+        }
+      }
+    } as any;
+
+    try {
+      const response = await this.costExplorerClient.send(
+        new GetCostAndUsageCommand({
+          TimePeriod: {
+            Start: formatDate(currentMonthStart),
+            End: formatDate(nextMonthStart),
+          },
+          Granularity: 'MONTHLY',
+          Metrics: ['AmortizedCost'],
+          GroupBy: [
+            {
+              Type: 'DIMENSION',
+              Key: 'SERVICE',
+            },
+          ],
+          Filter: filter,
+        })
+      );
+
+      const serviceGroups = response.ResultsByTime?.[0]?.Groups || [];
+      const services: ServiceBreakdown[] = serviceGroups
+        .map(group => {
+          const serviceCode = group.Keys?.[0] || 'Unknown';
+          const amount = parseFloat(group.Metrics?.AmortizedCost?.Amount || '0');
+          
+          return {
+            serviceCode,
+            serviceName: serviceCode, // Will be mapped to friendly names in frontend
+            amount: Math.round(amount * 100), // Convert to cents
+          };
+        })
+        .filter(service => service.amount > 0) // Only services with costs
+        .sort((a, b) => b.amount - a.amount); // Sort by cost descending
+
+      return services;
+    } catch (error: any) {
+      console.error('Error fetching all services costs:', error);
+      throw new Error(`Failed to fetch services costs: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get resource-level cost breakdown for a specific service
+   * @param serviceCode - AWS service code (e.g., "Amazon Elastic Compute Cloud")
+   * @param includeCredits - If false, excludes AWS credits
+   */
+  async getServiceResourceCosts(serviceCode: string, includeCredits: boolean = true): Promise<ServiceResources> {
+    const today = new Date();
+    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    
+    const formatDate = (date: Date) => date.toISOString().split('T')[0];
+    
+    const baseFilter = {
+      Dimensions: {
+        Key: 'SERVICE' as const,
+        Values: [serviceCode]
+      }
+    };
+
+    const filter = includeCredits ? baseFilter : {
+      And: [
+        baseFilter,
+        {
+          Not: {
+            Dimensions: {
+              Key: 'RECORD_TYPE' as const,
+              Values: ['Credit', 'Refund', 'Tax']
+            }
+          }
+        }
+      ]
+    } as any;
+
+    try {
+      // Get costs grouped by region and usage type
+      const response = await this.costExplorerClient.send(
+        new GetCostAndUsageCommand({
+          TimePeriod: {
+            Start: formatDate(currentMonthStart),
+            End: formatDate(nextMonthStart),
+          },
+          Granularity: 'MONTHLY',
+          Metrics: ['AmortizedCost'],
+          GroupBy: [
+            {
+              Type: 'DIMENSION',
+              Key: 'REGION',
+            },
+            {
+              Type: 'DIMENSION',
+              Key: 'USAGE_TYPE',
+            },
+          ],
+          Filter: filter,
+        })
+      );
+
+      const groups = response.ResultsByTime?.[0]?.Groups || [];
+      
+      // Organize by region
+      const byRegionMap = new Map<string, any[]>();
+      let totalAmount = 0;
+
+      for (const group of groups) {
+        const keys = group.Keys || [];
+        const region = keys[0] || 'Unknown';
+        const usageType = keys[1] || 'Unknown';
+        const amount = parseFloat(group.Metrics?.AmortizedCost?.Amount || '0');
+        
+        if (amount <= 0) continue;
+
+        totalAmount += amount;
+
+        if (!byRegionMap.has(region)) {
+          byRegionMap.set(region, []);
+        }
+
+        byRegionMap.get(region)!.push({
+          resourceId: usageType, // Using usage type as identifier since we can't get actual resource IDs from Cost Explorer
+          resourceType: usageType,
+          region,
+          usageType,
+          amount: Math.round(amount * 100), // Convert to cents
+        });
+      }
+
+      // Convert map to array format
+      const byRegion = Array.from(byRegionMap.entries()).map(([region, resources]) => {
+        const regionTotal = resources.reduce((sum, r) => sum + r.amount, 0);
+        return {
+          region,
+          amount: regionTotal,
+          resources: resources.sort((a, b) => b.amount - a.amount), // Sort by cost
+        };
+      }).sort((a, b) => b.amount - a.amount); // Sort regions by cost
+
+      return {
+        serviceCode,
+        serviceName: serviceCode,
+        totalAmount: Math.round(totalAmount * 100), // Convert to cents
+        byRegion,
+      };
+    } catch (error: any) {
+      console.error('Error fetching service resource costs:', error);
+      throw new Error(`Failed to fetch resource costs for ${serviceCode}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get cost optimization recommendations from AWS Cost Explorer
+   */
+  async getCostRecommendations(): Promise<CostRecommendations> {
+    try {
+      // Fetch Reserved Instance recommendations
+      const riRecommendations: any[] = [];
+      try {
+        const riResponse = await this.costExplorerClient.send(
+          new GetReservationPurchaseRecommendationCommand({
+            Service: 'Amazon Elastic Compute Cloud',
+            PaymentOption: 'NO_UPFRONT',
+            TermInYears: 'ONE_YEAR',
+            LookbackPeriodInDays: 'THIRTY_DAYS',
+          })
+        );
+
+        const recommendations = riResponse.Recommendations || [];
+        for (const rec of recommendations) {
+          const details = rec.RecommendationDetails?.[0];
+          if (!details) continue;
+
+          riRecommendations.push({
+            serviceCode: 'AmazonEC2',
+            instanceType: details.InstanceDetails?.EC2InstanceDetails?.InstanceType || 'Unknown',
+            region: details.InstanceDetails?.EC2InstanceDetails?.Region || 'Unknown',
+            paymentOption: 'NO_UPFRONT',
+            term: 'ONE_YEAR',
+            estimatedMonthlySavings: Math.round(
+              parseFloat(rec.RecommendationSummary?.TotalEstimatedMonthlySavingsAmount || '0') * 100
+            ),
+            estimatedSavingsPercentage: parseFloat(
+              rec.RecommendationSummary?.TotalEstimatedMonthlySavingsPercentage || '0'
+            ),
+            upfrontCost: Math.round(
+              parseFloat(details.RecommendedNormalizedUnitsToPurchase || '0') * 
+              parseFloat(details.RecurringStandardMonthlyCost || '0') * 100
+            ),
+            recommendedQuantity: parseFloat(details.RecommendedNormalizedUnitsToPurchase || '0'),
+          });
+        }
+      } catch (error) {
+        console.log('No RI recommendations available or error fetching:', error);
+      }
+
+      // Fetch Savings Plans recommendations
+      const spRecommendations: any[] = [];
+      try {
+        const spResponse = await this.costExplorerClient.send(
+          new GetSavingsPlansPurchaseRecommendationCommand({
+            SavingsPlansType: 'COMPUTE_SP',
+            PaymentOption: 'NO_UPFRONT',
+            TermInYears: 'ONE_YEAR',
+            LookbackPeriodInDays: 'THIRTY_DAYS',
+          })
+        );
+
+        const recommendations = spResponse.SavingsPlansPurchaseRecommendation?.SavingsPlansPurchaseRecommendationDetails || [];
+        for (const rec of recommendations) {
+          spRecommendations.push({
+            planType: 'COMPUTE_SP',
+            paymentOption: 'NO_UPFRONT',
+            term: 'ONE_YEAR',
+            hourlyCommitment: Math.round(parseFloat(rec.HourlyCommitmentToPurchase || '0') * 100),
+            estimatedMonthlySavings: Math.round(parseFloat(rec.EstimatedMonthlySavingsAmount || '0') * 100),
+            estimatedSavingsPercentage: parseFloat(rec.EstimatedSavingsPercentage || '0'),
+            upfrontCost: Math.round(parseFloat(rec.UpfrontCost || '0') * 100),
+          });
+        }
+      } catch (error) {
+        console.log('No Savings Plans recommendations available or error fetching:', error);
+      }
+
+      // Fetch Rightsizing recommendations
+      const rightsizingRecommendations: any[] = [];
+      try {
+        const rightSizeResponse = await this.costExplorerClient.send(
+          new GetRightsizingRecommendationCommand({
+            Service: 'AmazonEC2',
+          })
+        );
+
+        const recommendations = rightSizeResponse.RightsizingRecommendations || [];
+        for (const rec of recommendations) {
+          if (rec.RightsizingType !== 'Modify') continue;
+
+          const current = rec.CurrentInstance;
+          const target = rec.ModifyRecommendationDetail?.TargetInstances?.[0];
+
+          if (!current || !target) continue;
+
+          rightsizingRecommendations.push({
+            resourceId: current.ResourceId || 'Unknown',
+            resourceName: current.Tags?.find(t => t.Key === 'Name')?.Value,
+            currentInstanceType: current.InstanceType || 'Unknown',
+            recommendedInstanceType: target.TargetInstanceType || 'Unknown',
+            region: current.ResourceDetails?.EC2ResourceDetails?.Region || 'Unknown',
+            estimatedMonthlySavings: Math.round(
+              parseFloat(target.EstimatedMonthlySavings || '0') * 100
+            ),
+            estimatedSavingsPercentage: parseFloat(
+              target.EstimatedReservationCostForLookbackPeriod
+                ? ((parseFloat(target.EstimatedMonthlySavings || '0') / 
+                   parseFloat(target.EstimatedReservationCostForLookbackPeriod)) * 100).toString()
+                : '0'
+            ),
+            reason: `Instance is underutilized. Current average CPU: ${
+              current.ResourceUtilization?.EC2ResourceUtilization?.MaxCpuUtilizationPercentage || 'Unknown'
+            }%`,
+            cpuUtilization: parseFloat(
+              current.ResourceUtilization?.EC2ResourceUtilization?.MaxCpuUtilizationPercentage || '0'
+            ),
+          });
+        }
+      } catch (error) {
+        console.log('No rightsizing recommendations available or error fetching:', error);
+      }
+
+      // Calculate total estimated savings
+      const totalEstimatedMonthlySavings = 
+        riRecommendations.reduce((sum, r) => sum + r.estimatedMonthlySavings, 0) +
+        spRecommendations.reduce((sum, r) => sum + r.estimatedMonthlySavings, 0) +
+        rightsizingRecommendations.reduce((sum, r) => sum + r.estimatedMonthlySavings, 0);
+
+      return {
+        reservedInstances: riRecommendations,
+        savingsPlans: spRecommendations,
+        rightsizing: rightsizingRecommendations,
+        totalEstimatedMonthlySavings,
+      };
+    } catch (error: any) {
+      console.error('Error fetching cost recommendations:', error);
+      throw new Error(`Failed to fetch cost recommendations: ${error.message}`);
     }
   }
 }
