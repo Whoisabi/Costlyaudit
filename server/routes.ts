@@ -859,6 +859,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Cost Forecast route - returns forecasted costs for upcoming months
+  app.get("/api/costs/forecast", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const includeCredits = req.query.includeCredits !== 'false';
+      
+      const accounts = await storage.getAwsAccounts(userId);
+      if (accounts.length === 0) {
+        res.status(400).json({ 
+          message: "No AWS accounts connected. Please add an AWS account first." 
+        });
+        return;
+      }
+
+      const account = accounts[0];
+      
+      if (!account.accessKeyId || !account.secretAccessKey) {
+        res.status(400).json({ 
+          message: "AWS credentials are missing or invalid" 
+        });
+        return;
+      }
+      
+      const awsService = new AwsService({
+        accessKeyId: account.accessKeyId,
+        secretAccessKey: account.secretAccessKey,
+        region: account.region,
+      });
+
+      const forecast = await awsService.getCostForecast(includeCredits);
+      res.json(forecast);
+    } catch (error: any) {
+      console.error("Error fetching cost forecast:", error);
+      
+      if (error.name === 'AccessDeniedException' || error.message?.includes('permission')) {
+        res.status(403).json({ 
+          message: "AWS credentials do not have permission to access Cost Explorer forecasts. Ensure your IAM user has ce:GetCostForecast permission." 
+        });
+        return;
+      }
+      
+      res.status(500).json({ 
+        message: error.message || "Failed to fetch cost forecast" 
+      });
+    }
+  });
+
   // Resources route - returns all resources with cost optimization recommendations
   app.get("/api/resources", isAuthenticated, async (req: any, res) => {
     try {
