@@ -250,11 +250,12 @@ export const forecastPeriodSchema = z.object({
 });
 
 export const costForecastSchema = z.object({
-  nextMonth: forecastPeriodSchema,
-  next3Months: forecastPeriodSchema.optional(),
+  forecast: forecastPeriodSchema,
+  timePeriod: z.enum(['1_day', '7_days', 'month_to_date', 'current_month', '1_month', '3_months', '6_months', '1_year']),
   yearToDateActual: z.number(), // in cents
   yearToDateForecast: z.number(), // in cents
 });
 
 export type ForecastPeriod = z.infer<typeof forecastPeriodSchema>;
 export type CostForecast = z.infer<typeof costForecastSchema>;
+export type ForecastTimePeriod = z.infer<typeof costForecastSchema>['timePeriod'];
