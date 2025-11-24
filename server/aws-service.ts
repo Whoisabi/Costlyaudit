@@ -929,6 +929,147 @@ export class AwsService {
   }
 
   /**
+   * Get cost forecast for upcoming months
+   * @param includeCredits - If false, excludes AWS credits and refunds from forecast
+   */
+  async getCostForecast(includeCredits: boolean = true): Promise<import('@shared/schema').CostForecast> {
+    const today = new Date();
+    
+    // Calculate date ranges
+    const yearStart = new Date(today.getFullYear(), 0, 1);
+    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const next2MonthStart = new Date(today.getFullYear(), today.getMonth() + 2, 1);
+    const next3MonthStart = new Date(today.getFullYear(), today.getMonth() + 3, 1);
+    const next4MonthStart = new Date(today.getFullYear(), today.getMonth() + 4, 1);
+    
+    const formatDate = (date: Date) => date.toISOString().split('T')[0];
+    
+    const filter = includeCredits ? undefined : {
+      Not: {
+        Dimensions: {
+          Key: 'RECORD_TYPE' as const,
+          Values: ['Credit', 'Refund', 'Tax']
+        }
+      }
+    } as any;
+
+    try {
+      // Import GetCostForecastCommand
+      const { GetCostForecastCommand } = await import('@aws-sdk/client-cost-explorer');
+      
+      // Get forecast for next month
+      const nextMonthForecast = await this.costExplorerClient.send(
+        new GetCostForecastCommand({
+          TimePeriod: {
+            Start: formatDate(nextMonthStart),
+            End: formatDate(next2MonthStart),
+          },
+          Metric: 'AMORTIZED_COST',
+          Granularity: 'MONTHLY',
+          Filter: filter,
+          PredictionIntervalLevel: 80, // 80% confidence interval
+        })
+      );
+
+      // Get forecast for next 3 months
+      const next3MonthsForecast = await this.costExplorerClient.send(
+        new GetCostForecastCommand({
+          TimePeriod: {
+            Start: formatDate(nextMonthStart),
+            End: formatDate(next4MonthStart),
+          },
+          Metric: 'AMORTIZED_COST',
+          Granularity: 'MONTHLY',
+          Filter: filter,
+          PredictionIntervalLevel: 80,
+        })
+      );
+
+      // Get year-to-date actual costs
+      const ytdActual = await this.costExplorerClient.send(
+        new GetCostAndUsageCommand({
+          TimePeriod: {
+            Start: formatDate(yearStart),
+            End: formatDate(today),
+          },
+          Granularity: 'MONTHLY',
+          Metrics: ['AmortizedCost'],
+          Filter: filter,
+        })
+      );
+
+      // Get year-to-date forecast (from now to end of year)
+      const endOfYear = new Date(today.getFullYear(), 11, 31);
+      const ytdForecast = await this.costExplorerClient.send(
+        new GetCostForecastCommand({
+          TimePeriod: {
+            Start: formatDate(today),
+            End: formatDate(endOfYear),
+          },
+          Metric: 'AMORTIZED_COST',
+          Granularity: 'MONTHLY',
+          Filter: filter,
+        })
+      );
+
+      // Calculate year-to-date actual total
+      let ytdActualTotal = 0;
+      for (const result of ytdActual.ResultsByTime || []) {
+        ytdActualTotal += parseFloat(result.Total?.AmortizedCost?.Amount || '0');
+      }
+
+      // Extract next month forecast
+      const nextMonthAmount = parseFloat(nextMonthForecast.Total?.Amount || '0');
+      const nextMonthLower = parseFloat(nextMonthForecast.ForecastResultsByTime?.[0]?.MeanValue || '0');
+      const nextMonthUpper = parseFloat(nextMonthForecast.ForecastResultsByTime?.[0]?.MeanValue || '0');
+
+      // Extract 3-month forecast
+      let next3MonthsTotal = 0;
+      for (const result of next3MonthsForecast.ForecastResultsByTime || []) {
+        next3MonthsTotal += parseFloat(result.MeanValue || '0');
+      }
+
+      // Extract YTD forecast
+      let ytdForecastTotal = 0;
+      for (const result of ytdForecast.ForecastResultsByTime || []) {
+        ytdForecastTotal += parseFloat(result.MeanValue || '0');
+      }
+
+      return {
+        nextMonth: {
+          amount: Math.round(nextMonthAmount * 100), // Convert to cents
+          startDate: formatDate(nextMonthStart),
+          endDate: formatDate(next2MonthStart),
+          confidence: {
+            lower: Math.round(nextMonthLower * 0.9 * 100), // Approximate lower bound
+            upper: Math.round(nextMonthUpper * 1.1 * 100), // Approximate upper bound
+          },
+        },
+        next3Months: {
+          amount: Math.round(next3MonthsTotal * 100),
+          startDate: formatDate(nextMonthStart),
+          endDate: formatDate(next4MonthStart),
+        },
+        yearToDateActual: Math.round(ytdActualTotal * 100),
+        yearToDateForecast: Math.round((ytdActualTotal + ytdForecastTotal) * 100),
+      };
+    } catch (error: any) {
+      console.error('Error fetching cost forecast:', error);
+      
+      if (error.name === 'AccessDeniedException') {
+        throw new Error('AWS credentials do not have permission to access Cost Explorer forecasts. Please ensure your IAM user has ce:GetCostForecast permission.');
+      }
+      
+      if (error.name === 'DataUnavailableException') {
+        throw new Error('Cost forecast data is not available yet. It may take 24 hours for data to appear after enabling Cost Explorer.');
+      }
+      
+      throw new Error(`Failed to fetch cost forecast: ${error.message}`);
+    }
+  }
+
+  /**
    * Get all services with costs (not just top 5)
    * @param includeCredits - If false, excludes AWS credits and refunds
    */

@@ -237,3 +237,24 @@ export const costRecommendationsSchema = z.object({
 });
 
 export type CostRecommendations = z.infer<typeof costRecommendationsSchema>;
+
+// Cost Forecast types
+export const forecastPeriodSchema = z.object({
+  amount: z.number(), // in cents
+  startDate: z.string(),
+  endDate: z.string(),
+  confidence: z.object({
+    lower: z.number(), // lower bound in cents
+    upper: z.number(), // upper bound in cents
+  }).optional(),
+});
+
+export const costForecastSchema = z.object({
+  nextMonth: forecastPeriodSchema,
+  next3Months: forecastPeriodSchema.optional(),
+  yearToDateActual: z.number(), // in cents
+  yearToDateForecast: z.number(), // in cents
+});
+
+export type ForecastPeriod = z.infer<typeof forecastPeriodSchema>;
+export type CostForecast = z.infer<typeof costForecastSchema>;
