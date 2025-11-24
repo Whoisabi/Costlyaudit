@@ -232,4 +232,21 @@ export class PricingService {
       return 0;
     }
   }
+
+  /**
+   * Get all service costs from Cost Explorer
+   * Returns array of services with their costs in cents
+   */
+  async getAllServicesCosts(): Promise<{ serviceCode: string; amount: number }[]> {
+    try {
+      const costs = await this.awsService.getAllServicesCosts(false); // Don't include credits
+      return costs.map((cost: any) => ({
+        serviceCode: cost.serviceCode,
+        amount: cost.amount,
+      }));
+    } catch (error) {
+      console.error('Error fetching all service costs:', error);
+      return [];
+    }
+  }
 }

@@ -443,7 +443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           // Calculate savings for each control
-          const checksWithSavings = await Promise.all(
+          let checksWithSavings = await Promise.all(
             steampipeResult.controls.map(async (control) => {
               let estimatedSavings = 0;
 
@@ -481,16 +481,221 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 resourceId: control.resource,
                 estimatedSavings,
                 reason: control.reason,
+                serviceCode: getCostExplorerServiceFromArn(control.resource), // Add service code for capping
               };
             })
           );
+
+          // CAP SAVINGS: Ensure total savings per service never exceed actual service costs
+          try {
+            // Get all service costs from Cost Explorer
+            const allServiceCosts = await pricingService.getAllServicesCosts();
+            
+            // Create a map of service costs by service code (in cents)
+            const serviceCostMap: Record<string, number> = {};
+            for (const service of allServiceCosts) {
+              serviceCostMap[service.serviceCode] = service.amount;
+            }
+            
+            console.log('Service cost map:', Object.entries(serviceCostMap).map(([k, v]) => `${k}: $${(v / 100).toFixed(2)}`).join(', '));
+            
+            // Comprehensive service mapping: handles ARN services, resource names, and benchmark context
+            // Maps to Cost Explorer SERVICE dimension values (as they appear in getAllServicesCosts)
+            const serviceMapping: Record<string, string> = {
+              // S3 - handles both ARN and bucket name formats
+              's3': 'Amazon Simple Storage Service',
+              'amazons3': 'Amazon Simple Storage Service',
+              'amazon simple storage service': 'Amazon Simple Storage Service',
+              
+              // DynamoDB - handles both ARN and table name formats
+              'dynamodb': 'Amazon DynamoDB',
+              'amazondynamodb': 'Amazon DynamoDB',
+              'amazon dynamodb': 'Amazon DynamoDB',
+              
+              // EC2 - multiple service types
+              'ec2': 'Amazon Elastic Compute Cloud - Compute',
+              'amazonec2': 'Amazon Elastic Compute Cloud - Compute',
+              'amazon elastic compute cloud': 'Amazon Elastic Compute Cloud - Compute',
+              'amazon elastic compute cloud - compute': 'Amazon Elastic Compute Cloud - Compute',
+              'ec2 - other': 'EC2 - Other', // EBS, EIPs, etc.
+              
+              // RDS
+              'rds': 'Amazon Relational Database Service',
+              'amazonrds': 'Amazon Relational Database Service',
+              'amazon relational database service': 'Amazon Relational Database Service',
+              
+              // ElastiCache
+              'elasticache': 'Amazon ElastiCache',
+              'amazonelasticache': 'Amazon ElastiCache',
+              'amazon elasticache': 'Amazon ElastiCache',
+              
+              // Redshift
+              'redshift': 'Amazon Redshift',
+              'amazonredshift': 'Amazon Redshift',
+              'amazon redshift': 'Amazon Redshift',
+              
+              // Lambda
+              'lambda': 'AWS Lambda',
+              'awslambda': 'AWS Lambda',
+              'amazon lambda': 'AWS Lambda',
+              'aws lambda': 'AWS Lambda',
+              
+              // ELB
+              'elb': 'Elastic Load Balancing',
+              'elasticloadbalancing': 'Elastic Load Balancing',
+              'elastic load balancing': 'Elastic Load Balancing',
+            };
+            
+            // Normalize service code to handle Cost Explorer variations
+            const normalizeServiceCode = (code: string): string => {
+              const lowercased = code.toLowerCase().trim();
+              return serviceMapping[lowercased] || code;
+            };
+            
+            // Create normalized lookup map (all values in CENTS)
+            const normalizedCostMap: Record<string, number> = {};
+            for (const [serviceCode, amountInCents] of Object.entries(serviceCostMap)) {
+              const normalized = normalizeServiceCode(serviceCode);
+              normalizedCostMap[normalized] = (normalizedCostMap[normalized] || 0) + amountInCents;
+            }
+            
+            // Helper to extract service from benchmark ID and resource ID
+            const getServiceFromBenchmarkContext = (benchmarkId: string, resourceId: string): string | null => {
+              // Benchmark ID gives us the service family (e.g., "s3", "ec2", "rds")
+              const serviceLookup: Record<string, string> = {
+                's3': 'Amazon Simple Storage Service',
+                'ec2': 'Amazon Elastic Compute Cloud - Compute',
+                'rds': 'Amazon Relational Database Service',
+                'dynamodb': 'Amazon DynamoDB',
+                'elasticache': 'Amazon ElastiCache',
+                'redshift': 'Amazon Redshift',
+                'lambda': 'AWS Lambda',
+              };
+              
+              return serviceLookup[benchmarkId] || null;
+            };
+            
+            // Group ALL checks by service (ensuring ALL savings are accounted for and capped)
+            const savingsByService: Record<string, { total: number; checks: any[] }> = {};
+            for (const check of checksWithSavings) {
+              // Skip passed checks (no savings)
+              if (check.passed || check.estimatedSavings === 0) {
+                continue;
+              }
+              
+              // Ensure estimatedSavings is in CENTS (should already be, but verify)
+              check.estimatedSavings = Math.round(check.estimatedSavings);
+              
+              // Determine service code using multiple fallback strategies
+              let serviceCode: string | null = check.serviceCode;
+              
+              // Fallback 1: Extract from ARN if serviceCode is null
+              if (!serviceCode && check.resourceId && check.resourceId.startsWith('arn:')) {
+                const arnParts = check.resourceId.split(':');
+                if (arnParts.length >= 3) {
+                  const arnService = arnParts[2].toLowerCase();
+                  serviceCode = normalizeServiceCode(arnService);
+                }
+              }
+              
+              // Fallback 2: Use benchmark context (handles non-ARN identifiers like bucket names, table names)
+              if (!serviceCode) {
+                serviceCode = getServiceFromBenchmarkContext(benchmarkId, check.resourceId);
+              }
+              
+              // Fallback 3: Last resort - set to "Unknown Service" and zero it out
+              if (!serviceCode) {
+                serviceCode = 'Unknown Service';
+                console.warn(`⚠️ Could not determine service for ${check.resourceId} in benchmark ${benchmarkId}, will zero savings`);
+              }
+              
+              // Add check to savings map
+              if (!savingsByService[serviceCode]) {
+                savingsByService[serviceCode] = { total: 0, checks: [] };
+              }
+              savingsByService[serviceCode].total += check.estimatedSavings;
+              savingsByService[serviceCode].checks.push(check);
+            }
+            
+            // Cap savings for each service
+            for (const [serviceCode, data] of Object.entries(savingsByService)) {
+              // Try exact match first, then normalized match
+              let actualCost = serviceCostMap[serviceCode];
+              
+              // If no exact match, try normalized lookup
+              if (actualCost === undefined) {
+                const normalized = normalizeServiceCode(serviceCode);
+                actualCost = normalizedCostMap[normalized];
+              }
+              
+              // If still no match, service is not in Cost Explorer
+              if (actualCost === undefined) {
+                console.warn(`⚠️ Service ${serviceCode} not found in Cost Explorer. Setting all savings to $0.00 to enforce cap.`);
+                for (const check of data.checks) {
+                  const originalSavings = check.estimatedSavings;
+                  check.estimatedSavings = 0;
+                  console.log(`  ✓ ${check.name}: $${(originalSavings / 100).toFixed(2)} → $0.00 (no cost data)`);
+                }
+                continue;
+              }
+              
+              console.log(`Service ${serviceCode}: savings=$${(data.total / 100).toFixed(2)}, actualCost=$${(actualCost / 100).toFixed(2)}`);
+              
+              // If actual cost is zero or near-zero, cap all savings to zero
+              if (actualCost <= 0) {
+                console.warn(`⚠️ Service ${serviceCode} has $0.00 cost. Setting all savings to $0.00 to enforce cap.`);
+                for (const check of data.checks) {
+                  const originalSavings = check.estimatedSavings;
+                  check.estimatedSavings = 0;
+                  console.log(`  ✓ ${check.name}: $${(originalSavings / 100).toFixed(2)} → $0.00 (zero cost)`);
+                }
+                continue;
+              }
+              
+              // If total savings exceed actual cost, scale down proportionally with rounding remainder redistribution
+              if (data.total > actualCost) {
+                const scalingFactor = actualCost / data.total;
+                console.log(`⚠️ Capping ${serviceCode} savings: $${(data.total / 100).toFixed(2)} → $${(actualCost / 100).toFixed(2)} (${(scalingFactor * 100).toFixed(1)}% of original)`);
+                
+                // Scale each check's savings
+                for (const check of data.checks) {
+                  const originalSavings = check.estimatedSavings;
+                  check.estimatedSavings = Math.floor(check.estimatedSavings * scalingFactor);
+                  console.log(`  - ${check.name}: $${(originalSavings / 100).toFixed(2)} → $${(check.estimatedSavings / 100).toFixed(2)}`);
+                }
+                
+                // Recompute total after rounding to check for remainder
+                const cappedTotal = data.checks.reduce((sum: number, check: any) => sum + check.estimatedSavings, 0);
+                const remainder = actualCost - cappedTotal;
+                
+                if (remainder > 0) {
+                  // Redistribute remainder to the check with largest savings to maintain exact cap
+                  const largestCheck = data.checks.reduce((max: any, check: any) => 
+                    check.estimatedSavings > max.estimatedSavings ? check : max, 
+                    data.checks[0]
+                  );
+                  largestCheck.estimatedSavings += remainder;
+                  console.log(`  ✓ Redistributed remainder of $${(remainder / 100).toFixed(2)} to ${largestCheck.name}`);
+                }
+                
+                // Final verification: ensure total savings equals actual cost
+                const finalTotal = data.checks.reduce((sum: number, check: any) => sum + check.estimatedSavings, 0);
+                console.log(`  ✓ Final total: $${(finalTotal / 100).toFixed(2)} (exactly matches actual cost: $${(actualCost / 100).toFixed(2)})`);
+              } else {
+                console.log(`✓ Service ${serviceCode} savings within limits (no cap needed)`);
+              }
+            }
+          } catch (error) {
+            console.error('Error capping savings to service costs:', error);
+            // Continue without capping if there's an error
+          }
 
           const controlsPassed = steampipeResult.summary.status.ok;
           const controlsFailed = 
             steampipeResult.summary.status.alarm + 
             steampipeResult.summary.status.error;
 
-          // Calculate total savings
+          // Calculate total savings (after capping)
           const totalSavings = checksWithSavings.reduce(
             (sum, check) => sum + check.estimatedSavings,
             0
@@ -890,9 +1095,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const accounts = await storage.getAwsAccounts(userId);
       if (accounts.length === 0) {
         const today = new Date();
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
         res.status(200).json({ 
-          forecast: { amount: 0, startDate: today.toISOString(), endDate: today.toISOString() },
-          timePeriod,
+          forecast: { 
+            amount: 0, 
+            startDate: today.toISOString().split('T')[0], 
+            endDate: tomorrow.toISOString().split('T')[0]
+          },
+          timePeriod: timePeriod as any,
           yearToDateActual: 0,
           yearToDateForecast: 0
         });
@@ -903,9 +1114,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!account.accessKeyId || !account.secretAccessKey) {
         const today = new Date();
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
         res.status(200).json({ 
-          forecast: { amount: 0, startDate: today.toISOString(), endDate: today.toISOString() },
-          timePeriod,
+          forecast: { 
+            amount: 0, 
+            startDate: today.toISOString().split('T')[0], 
+            endDate: tomorrow.toISOString().split('T')[0]
+          },
+          timePeriod: timePeriod as any,
           yearToDateActual: 0,
           yearToDateForecast: 0
         });
