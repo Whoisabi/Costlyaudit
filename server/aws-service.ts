@@ -929,20 +929,15 @@ export class AwsService {
   }
 
   /**
-   * Get cost forecast for upcoming months
+   * Get cost forecast for selected time period
+   * @param timePeriod - Time period to forecast
    * @param includeCredits - If false, excludes AWS credits and refunds from forecast
    */
-  async getCostForecast(includeCredits: boolean = true): Promise<import('@shared/schema').CostForecast> {
+  async getCostForecast(
+    timePeriod: import('@shared/schema').ForecastTimePeriod = 'current_month',
+    includeCredits: boolean = true
+  ): Promise<import('@shared/schema').CostForecast> {
     const today = new Date();
-    
-    // Calculate date ranges
-    const yearStart = new Date(today.getFullYear(), 0, 1);
-    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-    const next2MonthStart = new Date(today.getFullYear(), today.getMonth() + 2, 1);
-    const next3MonthStart = new Date(today.getFullYear(), today.getMonth() + 3, 1);
-    const next4MonthStart = new Date(today.getFullYear(), today.getMonth() + 4, 1);
-    
     const formatDate = (date: Date) => date.toISOString().split('T')[0];
     
     const filter = includeCredits ? undefined : {
@@ -954,33 +949,97 @@ export class AwsService {
       }
     } as any;
 
+    // Calculate date ranges based on time period
+    let startDate: Date;
+    let endDate: Date;
+    let granularity: 'DAILY' | 'MONTHLY' = 'DAILY';
+    
+    const yearStart = new Date(today.getFullYear(), 0, 1);
+    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    
+    switch (timePeriod) {
+      case '1_day':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + 1);
+        endDate.setHours(23, 59, 59, 999);
+        granularity = 'DAILY';
+        break;
+      
+      case '7_days':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + 7);
+        granularity = 'DAILY';
+        break;
+      
+      case 'month_to_date':
+        startDate = currentMonthStart;
+        endDate = new Date(today);
+        endDate.setDate(endDate.getDate() + 1);
+        granularity = 'DAILY';
+        break;
+      
+      case 'current_month':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = nextMonthStart;
+        granularity = 'DAILY';
+        break;
+      
+      case '1_month':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setMonth(endDate.getMonth() + 1);
+        granularity = 'MONTHLY';
+        break;
+      
+      case '3_months':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setMonth(endDate.getMonth() + 3);
+        granularity = 'MONTHLY';
+        break;
+      
+      case '6_months':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setMonth(endDate.getMonth() + 6);
+        granularity = 'MONTHLY';
+        break;
+      
+      case '1_year':
+        startDate = new Date(today);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(today);
+        endDate.setFullYear(endDate.getFullYear() + 1);
+        granularity = 'MONTHLY';
+        break;
+      
+      default:
+        startDate = new Date(today);
+        endDate = nextMonthStart;
+        granularity = 'DAILY';
+    }
+
     try {
-      // Import GetCostForecastCommand
       const { GetCostForecastCommand } = await import('@aws-sdk/client-cost-explorer');
       
-      // Get forecast for next month
-      const nextMonthForecast = await this.costExplorerClient.send(
+      // Get forecast for selected period
+      const forecastResponse = await this.costExplorerClient.send(
         new GetCostForecastCommand({
           TimePeriod: {
-            Start: formatDate(nextMonthStart),
-            End: formatDate(next2MonthStart),
+            Start: formatDate(startDate),
+            End: formatDate(endDate),
           },
           Metric: 'AMORTIZED_COST',
-          Granularity: 'MONTHLY',
-          Filter: filter,
-          PredictionIntervalLevel: 80, // 80% confidence interval
-        })
-      );
-
-      // Get forecast for next 3 months
-      const next3MonthsForecast = await this.costExplorerClient.send(
-        new GetCostForecastCommand({
-          TimePeriod: {
-            Start: formatDate(nextMonthStart),
-            End: formatDate(next4MonthStart),
-          },
-          Metric: 'AMORTIZED_COST',
-          Granularity: 'MONTHLY',
+          Granularity: granularity,
           Filter: filter,
           PredictionIntervalLevel: 80,
         })
@@ -1019,15 +1078,17 @@ export class AwsService {
         ytdActualTotal += parseFloat(result.Total?.AmortizedCost?.Amount || '0');
       }
 
-      // Extract next month forecast
-      const nextMonthAmount = parseFloat(nextMonthForecast.Total?.Amount || '0');
-      const nextMonthLower = parseFloat(nextMonthForecast.ForecastResultsByTime?.[0]?.MeanValue || '0');
-      const nextMonthUpper = parseFloat(nextMonthForecast.ForecastResultsByTime?.[0]?.MeanValue || '0');
-
-      // Extract 3-month forecast
-      let next3MonthsTotal = 0;
-      for (const result of next3MonthsForecast.ForecastResultsByTime || []) {
-        next3MonthsTotal += parseFloat(result.MeanValue || '0');
+      // Extract forecast amount
+      const forecastAmount = parseFloat(forecastResponse.Total?.Amount || '0');
+      
+      // Calculate confidence interval if available
+      let confidence: { lower: number; upper: number } | undefined;
+      if (forecastResponse.ForecastResultsByTime && forecastResponse.ForecastResultsByTime.length > 0) {
+        const meanValue = parseFloat(forecastResponse.ForecastResultsByTime[0]?.MeanValue || '0');
+        confidence = {
+          lower: Math.round(meanValue * 0.9 * 100),
+          upper: Math.round(meanValue * 1.1 * 100),
+        };
       }
 
       // Extract YTD forecast
@@ -1037,20 +1098,13 @@ export class AwsService {
       }
 
       return {
-        nextMonth: {
-          amount: Math.round(nextMonthAmount * 100), // Convert to cents
-          startDate: formatDate(nextMonthStart),
-          endDate: formatDate(next2MonthStart),
-          confidence: {
-            lower: Math.round(nextMonthLower * 0.9 * 100), // Approximate lower bound
-            upper: Math.round(nextMonthUpper * 1.1 * 100), // Approximate upper bound
-          },
+        forecast: {
+          amount: Math.round(forecastAmount * 100),
+          startDate: formatDate(startDate),
+          endDate: formatDate(endDate),
+          confidence,
         },
-        next3Months: {
-          amount: Math.round(next3MonthsTotal * 100),
-          startDate: formatDate(nextMonthStart),
-          endDate: formatDate(next4MonthStart),
-        },
+        timePeriod,
         yearToDateActual: Math.round(ytdActualTotal * 100),
         yearToDateForecast: Math.round((ytdActualTotal + ytdForecastTotal) * 100),
       };

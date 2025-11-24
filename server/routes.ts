@@ -873,7 +873,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Cost Forecast route - returns forecasted costs for upcoming months
+  // Cost Forecast route - returns forecasted costs for selected time period
   app.get("/api/costs/forecast", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
@@ -882,11 +882,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const includeCreditsParam = req.query.includeCredits;
       const includeCredits = includeCreditsParam === undefined || includeCreditsParam === 'true';
       
+      // Validate timePeriod parameter
+      const timePeriodParam = req.query.timePeriod as string;
+      const validTimePeriods = ['1_day', '7_days', 'month_to_date', 'current_month', '1_month', '3_months', '6_months', '1_year'];
+      const timePeriod = validTimePeriods.includes(timePeriodParam) ? timePeriodParam : 'current_month';
+      
       const accounts = await storage.getAwsAccounts(userId);
       if (accounts.length === 0) {
+        const today = new Date();
         res.status(200).json({ 
-          nextMonth: { amount: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString() },
-          next3Months: { amount: 0 },
+          forecast: { amount: 0, startDate: today.toISOString(), endDate: today.toISOString() },
+          timePeriod,
           yearToDateActual: 0,
           yearToDateForecast: 0
         });
@@ -896,9 +902,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const account = accounts[0];
       
       if (!account.accessKeyId || !account.secretAccessKey) {
+        const today = new Date();
         res.status(200).json({ 
-          nextMonth: { amount: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString() },
-          next3Months: { amount: 0 },
+          forecast: { amount: 0, startDate: today.toISOString(), endDate: today.toISOString() },
+          timePeriod,
           yearToDateActual: 0,
           yearToDateForecast: 0
         });
@@ -911,7 +918,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         region: account.region,
       });
 
-      const forecast = await awsService.getCostForecast(includeCredits);
+      const forecast = await awsService.getCostForecast(timePeriod as any, includeCredits);
       res.json(forecast);
     } catch (error: any) {
       console.error("Error fetching cost forecast:", error);
