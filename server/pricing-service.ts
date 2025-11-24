@@ -31,24 +31,81 @@ export class PricingService {
   }
 
   /**
+   * Get total monthly cost for a service using Cost Explorer
+   * Returns cost in cents, or null if data not available
+   */
+  private async getServiceMonthlyCost(
+    serviceCode: string
+  ): Promise<number | null> {
+    try {
+      // Get service costs for last 30 days
+      const costs = await this.awsService.getAllServicesCosts(false); // Don't include credits
+      
+      // Find the service in the costs
+      const serviceCost = costs.find((c: { serviceCode: string; amount: number }) => c.serviceCode === serviceCode);
+      
+      if (!serviceCost || serviceCost.amount === 0) {
+        return null;
+      }
+      
+      // Return monthly cost in cents
+      return serviceCost.amount;
+    } catch (error) {
+      console.error(`Error fetching service cost for ${serviceCode}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Calculate savings with explicit service code (preferred method)
    * Uses actual Cost Explorer data when available
+   * 
+   * @param resourceCount - Optional: total number of resources in the service (for better cost distribution)
    */
   async calculateSavingsForControlWithService(
     controlName: string,
     resourceId: string,
-    serviceCode: string
+    serviceCode: string,
+    resourceCount?: number
   ): Promise<number> {
     const lowerControlName = controlName.toLowerCase();
 
     try {
-      // Get actual monthly cost from Cost Explorer
-      const monthlyCost = await this.getResourceMonthlyCost(resourceId, serviceCode);
+      // Try to get resource-level cost first
+      let monthlyCost = await this.getResourceMonthlyCost(resourceId, serviceCode);
 
+      // For S3, DynamoDB, and other services that don't support resource-level queries,
+      // fall back to service-level cost estimation
       if (monthlyCost === null || monthlyCost === 0) {
-        // No cost data available, return 0
-        console.warn(`No cost data found for resource ${resourceId} in service ${serviceCode}`);
-        return 0;
+        // Check if this is a service that doesn't support resource-level queries
+        const noResourceLevelServices = [
+          'Amazon Simple Storage Service',
+          'Amazon DynamoDB',
+          'AmazonS3',
+          'AmazonDynamoDB'
+        ];
+        
+        if (noResourceLevelServices.some(s => serviceCode.includes(s))) {
+          // Get total service cost
+          const serviceCost = await this.getServiceMonthlyCost(serviceCode);
+          
+          if (serviceCost && serviceCost > 0) {
+            // If we know the resource count, distribute cost evenly across resources
+            // Otherwise, use a conservative 3% estimate (assumes ~33 resources)
+            const distributionFactor = resourceCount && resourceCount > 0 
+              ? (1 / resourceCount) 
+              : 0.03; // 3% conservative default
+            
+            monthlyCost = Math.round(serviceCost * distributionFactor);
+            console.log(`Using service-level cost estimation for ${resourceId}: $${(monthlyCost / 100).toFixed(2)}/month (${(distributionFactor * 100).toFixed(1)}% of $${(serviceCost / 100).toFixed(2)} total ${serviceCode} cost${resourceCount ? `, distributed across ${resourceCount} resources` : ''})`);
+          } else {
+            console.warn(`No cost data found for resource ${resourceId} in service ${serviceCode}`);
+            return 0;
+          }
+        } else {
+          console.warn(`No cost data found for resource ${resourceId} in service ${serviceCode}`);
+          return 0;
+        }
       }
 
       // Determine savings percentage based on optimization type
@@ -58,6 +115,8 @@ export class PricingService {
         savingsPercentage = 0.6; // 60% savings for idle resources
       } else if (lowerControlName.includes('upgrade') || lowerControlName.includes('graviton')) {
         savingsPercentage = 0.3; // 30% savings for right-sizing/upgrades
+      } else if (lowerControlName.includes('lifecycle') || lowerControlName.includes('versioning')) {
+        savingsPercentage = 0.3; // 30% savings for storage optimizations
       }
 
       // Calculate savings (in cents)

@@ -431,6 +431,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             region: account.region,
           });
 
+          // Count resources by service for better cost distribution
+          const resourceCountByService: Record<string, number> = {};
+          for (const control of steampipeResult.controls) {
+            if (control.status !== 'ok') {
+              const serviceCode = getCostExplorerServiceFromArn(control.resource);
+              if (serviceCode) {
+                resourceCountByService[serviceCode] = (resourceCountByService[serviceCode] || 0) + 1;
+              }
+            }
+          }
+
           // Calculate savings for each control
           const checksWithSavings = await Promise.all(
             steampipeResult.controls.map(async (control) => {
@@ -449,10 +460,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     console.warn(`Cost Explorer resource-level data not available for ${control.resource}`);
                     estimatedSavings = 0;
                   } else {
+                    // Pass resource count for this service to enable accurate cost distribution
+                    const resourceCount = resourceCountByService[serviceCode];
                     estimatedSavings = await pricingService.calculateSavingsForControlWithService(
                       control.name,
                       resourceId,
-                      serviceCode
+                      serviceCode,
+                      resourceCount
                     );
                   }
                 } catch (error) {
@@ -863,12 +877,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/costs/forecast", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      const includeCredits = req.query.includeCredits !== 'false';
+      
+      // Validate includeCredits parameter
+      const includeCreditsParam = req.query.includeCredits;
+      const includeCredits = includeCreditsParam === undefined || includeCreditsParam === 'true';
       
       const accounts = await storage.getAwsAccounts(userId);
       if (accounts.length === 0) {
-        res.status(400).json({ 
-          message: "No AWS accounts connected. Please add an AWS account first." 
+        res.status(200).json({ 
+          nextMonth: { amount: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString() },
+          next3Months: { amount: 0 },
+          yearToDateActual: 0,
+          yearToDateForecast: 0
         });
         return;
       }
@@ -876,8 +896,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const account = accounts[0];
       
       if (!account.accessKeyId || !account.secretAccessKey) {
-        res.status(400).json({ 
-          message: "AWS credentials are missing or invalid" 
+        res.status(200).json({ 
+          nextMonth: { amount: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString() },
+          next3Months: { amount: 0 },
+          yearToDateActual: 0,
+          yearToDateForecast: 0
         });
         return;
       }
