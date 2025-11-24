@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { DollarSign, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import CostSummary from "@/components/CostSummary";
+import CostForecast from "@/components/CostForecast";
 import { AllServicesCosts } from "@/components/AllServicesCosts";
 import { CostRecommendationsPanel } from "@/components/CostRecommendations";
 import {
@@ -97,12 +98,15 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* AWS Cost Comparison */}
-      <CostSummary 
-        includeCredits={includeCredits}
-        onIncludeCreditsChange={setIncludeCredits}
-        showToggle={false}
-      />
+      {/* AWS Cost Comparison and Forecast */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <CostSummary 
+          includeCredits={includeCredits}
+          onIncludeCreditsChange={setIncludeCredits}
+          showToggle={false}
+        />
+        <CostForecast includeCredits={includeCredits} />
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
